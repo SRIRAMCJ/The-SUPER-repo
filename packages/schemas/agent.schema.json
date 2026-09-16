@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-repo.dev/schemas/agent.schema.json",
+  "title": "SUPER Agent",
+  "description": "Declarative contract for an autonomous or human-supervised SUPER agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "kind", "name", "version", "status", "description", "provenance", "role", "capabilities", "execution"],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "0.1.0" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+    "kind": { "const": "agent" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["experimental", "alpha", "beta", "stable", "deprecated", "disabled"] },
+    "description": { "type": "string", "minLength": 1 },
+    "provenance": { "$ref": "capability.schema.json#/properties/provenance" },
+    "role": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "capabilities": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" }, "uniqueItems": true },
+    "skills": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "tools": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "autonomy"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["interactive", "task", "workflow", "background"] },
+        "autonomy": { "type": "string", "enum": ["assistive", "supervised", "bounded", "autonomous"] },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "maxSteps": { "type": "integer", "minimum": 1 },
+        "requiresApproval": { "type": "boolean", "default": false }
+      }
+    },
+    "input": { "$ref": "#/definitions/ioContract" },
+    "output": { "$ref": "#/definitions/ioContract" },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "definitions": {
+    "ioContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contentType": { "type": "string", "minLength": 1 },
+        "schema": { "type": ["object", "string"] },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

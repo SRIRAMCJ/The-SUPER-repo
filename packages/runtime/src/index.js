@@ -14,5 +14,7 @@ export { ReflectionEngine, createBasicOutputCritic } from './reflection.js';
 export { AdaptiveAgentRuntime } from './adaptive.js';
 export { HandoffProtocol } from './handoff.js';
 export { DelegationEngine } from './delegation.js';
+export { SharedContext } from './shared-context.js';
+export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';

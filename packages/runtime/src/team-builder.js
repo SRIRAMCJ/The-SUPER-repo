@@ -10,6 +10,8 @@ export class TeamBuilder {
     const plans = this.planner.plan(request, { kind: 'agent', tags: options.tags });
     const selected = plans.candidates?.slice(0, desired) ?? (plans.selection ? [plans.selection] : []);
     const members = selected.map((candidate) => ({ agent: candidate.capabilityId, task: options.task ?? request }));
+    const strategy = options.strategy === 'parallel' ? 'parallel' : 'sequential';
+    const maxConcurrency = Math.max(1, Math.min(Number(options.maxConcurrency ?? desired) || 1, 64));
     return {
       schemaVersion: '0.1.0',
       id: options.id ?? `team/${slug(request)}`,
@@ -20,6 +22,7 @@ export class TeamBuilder {
       description: `Dynamically composed team for: ${request}`,
       provenance: { sourceType: 'native' },
       task: request,
+      execution: { strategy, maxConcurrency, failFast: options.failFast !== false },
       members,
       metadata: { selection: plans }
     };

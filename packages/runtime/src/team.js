@@ -1,13 +1,16 @@
 import { createExecutionId } from './events.js';
+import { SharedContext } from './shared-context.js';
+import { TeamExecutionCoordinator } from './team-coordinator.js';
 
 export class TeamRuntime {
-  constructor({ registry, agentRuntime, delegationEngine, events = null, clock = () => new Date() } = {}) {
+  constructor({ registry, agentRuntime, delegationEngine, coordinator = null, events = null, clock = () => new Date() } = {}) {
     if (!registry || !agentRuntime || !delegationEngine) throw new TypeError('TeamRuntime requires registry, agentRuntime and delegationEngine');
     this.registry = registry;
     this.agentRuntime = agentRuntime;
     this.delegationEngine = delegationEngine;
     this.events = events;
     this.clock = clock;
+    this.coordinator = coordinator ?? new TeamExecutionCoordinator({ delegationEngine, events, clock });
   }
 
   async execute(team, input = {}, context = {}, options = {}) {
@@ -17,25 +20,24 @@ export class TeamRuntime {
     const members = Array.isArray(team.members) ? team.members : [];
     if (!members.length) return this.#fail(executionId, startedAt, 'TEAM_EMPTY', `Team has no members: ${team.id}`);
     this.events?.emit({ type: 'team.started', executionId, teamId: team.id, status: 'started', data: { memberCount: members.length } });
-    const results = [];
-    const state = { ...(context.teamState ?? {}), teamId: team.id, results };
+    const sharedContext = new SharedContext(context.teamState ?? {}, { clock: this.clock });
     try {
-      for (const member of members) {
-        const agentId = typeof member === 'string' ? member : member.agent;
-        if (!agentId) return this.#fail(executionId, startedAt, 'TEAM_MEMBER_INVALID', 'Team member must identify an agent', { results });
-        const task = typeof member === 'string' ? team.task ?? `Execute team task for ${team.name}` : member.task ?? team.task ?? `Execute assigned role for ${team.name}`;
-        const delegated = await this.delegationEngine.delegate({ fromAgent: team.id, toAgent: agentId, task, input, context, state });
-        results.push({ agentId, task, ...delegated });
-        if (delegated.status !== 'succeeded' && options.failFast !== false) {
-          return this.#fail(executionId, startedAt, 'TEAM_MEMBER_FAILED', `Team member failed: ${agentId}`, { results });
-        }
-        state.results = results;
-      }
-      const output = { executionId, teamId: team.id, startedAt, finishedAt: this.clock().toISOString(), status: 'succeeded', results };
-      this.events?.emit({ type: 'team.completed', executionId, teamId: team.id, status: 'succeeded', data: output });
+      const execution = await this.coordinator.execute({
+        team,
+        members,
+        input,
+        context: { ...context, executionId },
+        sharedContext,
+        strategy: options.strategy ?? team.execution?.strategy ?? 'sequential',
+        maxConcurrency: options.maxConcurrency ?? team.execution?.maxConcurrency ?? 4,
+        failFast: options.failFast ?? team.execution?.failFast ?? true
+      });
+      const failed = execution.results.some((result) => result.status !== 'succeeded');
+      const output = { executionId, teamId: team.id, startedAt, finishedAt: this.clock().toISOString(), status: failed ? 'failed' : 'succeeded', strategy: execution.strategy, results: execution.results, sharedContext: execution.context };
+      this.events?.emit({ type: failed ? 'team.failed' : 'team.completed', executionId, teamId: team.id, status: output.status, data: output, error: failed ? { code: 'TEAM_MEMBER_FAILED', message: 'One or more team members did not succeed', retryable: false } : undefined });
       return output;
     } catch (error) {
-      return this.#fail(executionId, startedAt, error?.code ?? 'TEAM_ERROR', error?.message ?? String(error), { results });
+      return this.#fail(executionId, startedAt, error?.code ?? 'TEAM_ERROR', error?.message ?? String(error));
     }
   }
 

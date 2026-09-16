@@ -27,7 +27,7 @@ test('repository analyst executes mission, verifies report, and records lifecycl
     assert.equal(runtime.events.history({ type: 'mission.completed' }).length, 1);
     assert.equal(runtime.memory.size(), 1);
     assert.equal(runtime.memory.query((item) => item.missionId === runtime.manifests.mission.id).length, 1);
-    assert.equal(runtime.audit.list().length, 1);
+    assert.equal(runtime.audit.list().length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

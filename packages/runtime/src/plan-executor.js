@@ -29,7 +29,12 @@ export class ExecutionPlanExecutor {
     if (state.status === 'running' && !options.allowRunning) return failure(executionId, plan.root, 'EXECUTION_ALREADY_RUNNING', `Execution is already running: ${executionId}`);
     if (!Number.isInteger(state.nextStep) || state.nextStep < 1 || state.nextStep > plan.steps.length) return failure(executionId, plan.root, 'EXECUTION_STATE_CURSOR_INVALID', `Invalid resume cursor for ${executionId}`);
 
-    const claimed = await this.stateStore.update(executionId, { status: 'running', attempt: (state.attempt ?? 1) + 1, error: null }, state.version);
+    let claimed;
+    try {
+      claimed = await this.stateStore.update(executionId, { status: 'running', attempt: (state.attempt ?? 1) + 1, error: null }, state.version);
+    } catch (error) {
+      return failure(executionId, plan.root, error?.code ?? 'EXECUTION_STATE_CONFLICT', error instanceof Error ? error.message : String(error), Boolean(error?.retryable));
+    }
     return this.#run(plan, executionId, claimed.startedAt, state.nextStep, state.currentInput, state.results ?? [], context, claimed.attempt, true);
   }
 
@@ -90,8 +95,8 @@ function validatePlan(plan) {
   if (plan.steps.at(-1).capabilityId !== plan.root) throw new TypeError('Execution plan root must be the final step');
 }
 
-function failure(executionId, root, code, message) {
-  return { executionId, root, status: 'failed', error: { code, message, retryable: false } };
+function failure(executionId, root, code, message, retryable = false) {
+  return { executionId, root, status: 'failed', error: { code, message, retryable } };
 }
 
 function normalizePlanError(error) {

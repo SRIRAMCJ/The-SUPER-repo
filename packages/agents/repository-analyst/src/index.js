@@ -1,4 +1,4 @@
-import { CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
+import { AgentRuntime, CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
 import { analyzeRepository, repositoryAnalyzerTool } from '../../../tools/repository/src/index.js';
 
 export const repositoryAnalystAgent = Object.freeze({
@@ -28,6 +28,7 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   const execution = new ExecutionEngine({ registry, events, verifier, clock });
   const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events, clock });
   const mission = new MissionEngine({ workflowEngine: workflow, events, memory, clock });
+  const agent = new AgentRuntime({ registry, missionEngine: mission, events, clock });
 
   registry.register(repositoryAnalyzerTool, async (input) => analyzeRepository(input.repositoryPath, input.options));
   const workflowManifest = {
@@ -41,8 +42,9 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
     description: 'Analyze a repository and return a verified engineering report.', provenance: { sourceType: 'native' }, workflow: workflowManifest.id
   };
   registry.register(missionManifest);
+  registry.register(repositoryAnalystAgent, async () => ({ delegated: true }));
 
-  return { events, audit, memory, registry, policy, verifier, execution, workflow, mission, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
+  return { events, audit, memory, registry, policy, verifier, execution, workflow, mission, agent, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
 }
 
 function verifyRepositoryReport({ output }) {

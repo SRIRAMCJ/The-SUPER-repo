@@ -1,0 +1,11 @@
+{
+  "name": "@super/agent-repository-analyst",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.js",
+  "dependencies": {
+    "@super/runtime": "0.1.0",
+    "@super/tool-repository": "0.1.0"
+  }
+}

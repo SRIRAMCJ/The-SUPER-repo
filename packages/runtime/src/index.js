@@ -8,6 +8,8 @@ export { WorkflowEngine } from './workflow.js';
 export { MissionEngine } from './mission.js';
 export { VerificationEngine } from './verification.js';
 export { ExecutionAudit, MemoryStore } from './audit.js';
+export { ExecutionStateStore, FileExecutionStateStore, isTerminalExecutionStatus } from './state.js';
+export { ExecutionRecovery } from './recovery.js';
 export { CapabilityPlanner } from './planner.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';

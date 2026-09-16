@@ -1,37 +1,44 @@
+import { createExecutionId } from './events.js';
+
 export class MissionEngine {
-  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date() }) {
+  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date(), stateStore = null }) {
     if (!workflowEngine) throw new TypeError('MissionEngine requires workflowEngine');
     this.workflowEngine = workflowEngine;
     this.teamRuntime = teamRuntime;
     this.events = events;
     this.memory = memory;
     this.clock = clock;
+    this.stateStore = stateStore;
   }
 
   async execute(mission, input = {}, context = {}) {
     if (!mission || mission.kind !== 'mission') throw new TypeError('A mission capability manifest is required');
+    const missionExecutionId = createExecutionId();
     const startedAt = this.clock().toISOString();
-    this.events?.emit({ type: 'mission.started', missionId: mission.id, status: 'started', data: { input } });
+    if (this.stateStore) await this.stateStore.create({ schemaVersion: '0.1.0', type: 'execution-state', executionId: missionExecutionId, kind: 'mission', missionId: mission.id, status: 'running', input, startedAt, attempt: 1 });
+    this.events?.emit({ type: 'mission.started', missionId: mission.id, missionExecutionId, status: 'started', data: { input } });
 
     try {
       let result;
       if (mission.team) {
         if (!this.teamRuntime) throw Object.assign(new Error(`Mission requires team runtime: ${mission.team}`), { code: 'TEAM_RUNTIME_UNAVAILABLE' });
         const team = this.workflowEngine.registry.require(mission.team).manifest;
-        result = await this.teamRuntime.execute(team, input, context);
+        result = await this.teamRuntime.execute(team, input, { ...context, missionExecutionId });
       } else {
-        result = await this.executeWorkflow(mission, input, context);
+        result = await this.executeWorkflow(mission, input, { ...context, missionExecutionId });
       }
-      const missionResult = { missionId: mission.id, startedAt, finishedAt: this.clock().toISOString(), ...result };
+      const missionResult = { missionId: mission.id, missionExecutionId, startedAt, finishedAt: this.clock().toISOString(), ...result };
       const type = result.status === 'succeeded' ? 'mission.completed' : 'mission.failed';
-      this.events?.emit({ type, missionId: mission.id, status: result.status, data: missionResult, error: result.error });
-      this.memory?.append({ type: 'mission-execution', missionId: mission.id, status: result.status, executionId: result.executionId ?? result.workflowExecutionId ?? null, result: missionResult });
+      if (this.stateStore) await this.stateStore.update(missionExecutionId, { status: result.status, childExecutionId: result.executionId ?? result.workflowExecutionId ?? null, result: missionResult, finishedAt: missionResult.finishedAt, error: result.error ?? null }, undefined);
+      this.events?.emit({ type, missionId: mission.id, missionExecutionId, status: result.status, data: missionResult, error: result.error });
+      this.memory?.append({ type: 'mission-execution', missionId: mission.id, status: result.status, executionId: missionExecutionId, childExecutionId: result.executionId ?? result.workflowExecutionId ?? null, result: missionResult });
       return missionResult;
     } catch (error) {
       const normalized = normalizeMissionError(error);
-      const missionResult = { missionId: mission.id, startedAt, finishedAt: this.clock().toISOString(), status: 'failed', error: normalized };
-      this.events?.emit({ type: 'mission.failed', missionId: mission.id, status: 'failed', error: normalized, data: missionResult });
-      this.memory?.append({ type: 'mission-execution', missionId: mission.id, status: 'failed', executionId: null, result: missionResult });
+      const missionResult = { missionId: mission.id, missionExecutionId, startedAt, finishedAt: this.clock().toISOString(), status: 'failed', error: normalized };
+      if (this.stateStore) await this.stateStore.update(missionExecutionId, { status: 'failed', result: missionResult, finishedAt: missionResult.finishedAt, error: normalized }, undefined);
+      this.events?.emit({ type: 'mission.failed', missionId: mission.id, missionExecutionId, status: 'failed', error: normalized, data: missionResult });
+      this.memory?.append({ type: 'mission-execution', missionId: mission.id, status: 'failed', executionId: missionExecutionId, childExecutionId: null, result: missionResult });
       return missionResult;
     }
   }

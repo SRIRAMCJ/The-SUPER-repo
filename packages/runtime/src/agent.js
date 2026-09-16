@@ -1,3 +1,4 @@
+import { createExecutionId } from './events.js';
 import { CapabilityPlanner } from './planner.js';
 
 export class AgentRuntime {
@@ -13,7 +14,7 @@ export class AgentRuntime {
   async execute(agent, input = {}, context = {}) {
     if (!agent || agent.kind !== 'agent') throw new TypeError('An agent capability manifest is required');
     const startedAt = this.clock().toISOString();
-    const executionId = crypto.randomUUID();
+    const executionId = createExecutionId();
     this.events?.emit({ type: 'agent.started', executionId, agentId: agent.id, status: 'started', data: { input } });
 
     try {
@@ -22,14 +23,7 @@ export class AgentRuntime {
       const mission = this.registry.require(missionId).manifest;
       const result = await this.missionEngine.execute(mission, input, context);
       const agentResult = { executionId, agentId: agent.id, startedAt, finishedAt: this.clock().toISOString(), ...result };
-      this.events?.emit({
-        type: result.status === 'succeeded' ? 'agent.completed' : 'agent.failed',
-        executionId,
-        agentId: agent.id,
-        status: result.status,
-        data: agentResult,
-        error: result.error
-      });
+      this.events?.emit({ type: result.status === 'succeeded' ? 'agent.completed' : 'agent.failed', executionId, agentId: agent.id, status: result.status, data: agentResult, error: result.error });
       return agentResult;
     } catch (error) {
       const normalized = normalizeAgentError(error);
@@ -45,9 +39,7 @@ export class AgentRuntime {
 
   async executeRequest(request, input = {}, context = {}, options = {}) {
     const plan = this.plan(request, { kind: 'agent', ...options });
-    if (!plan.selection) {
-      return { status: 'failed', error: { code: 'NO_AGENT_MATCH', message: 'No registered agent matched the request', retryable: false }, plan };
-    }
+    if (!plan.selection) return { status: 'failed', error: { code: 'NO_AGENT_MATCH', message: 'No registered agent matched the request', retryable: false }, plan };
     const agent = this.registry.require(plan.selection.capabilityId).manifest;
     const result = await this.execute(agent, input, context);
     return { ...result, plan };

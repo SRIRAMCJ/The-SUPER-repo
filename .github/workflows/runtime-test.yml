@@ -2,7 +2,7 @@ name: Core Tests
 
 on:
   push:
-    branches: [main, 'foundation/**', 'agent/**']
+    branches: [main, 'foundation/**', 'agent/**', 'cli/**']
   pull_request:
     branches: [main]
 
@@ -21,3 +21,5 @@ jobs:
         run: npm run test:runtime
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
+      - name: Run CLI tests
+        run: npm run test:cli

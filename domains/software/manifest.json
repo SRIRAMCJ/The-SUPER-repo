@@ -1,0 +1,16 @@
+{
+  "id": "software",
+  "name": "Software Engineering",
+  "version": "1.0.0",
+  "description": "Executable capability pack for software engineering analysis and delivery.",
+  "capabilities": [
+    "software.repository-analysis",
+    "software.code-review",
+    "software.architecture-analysis",
+    "software.testing-analysis"
+  ],
+  "provenance": [
+    { "source": "https://github.com/affaan-m/everything-claude-code", "relationship": "inspired-by", "notes": "Reference for engineering-oriented agent and skill organization." },
+    { "source": "https://github.com/alibaba/open-code-review", "relationship": "validated-against", "notes": "Reference for deterministic code-review pipelines, structured findings, and verification-oriented review." }
+  ]
+}

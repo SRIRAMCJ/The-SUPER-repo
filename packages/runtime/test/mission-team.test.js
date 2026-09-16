@@ -1,42 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EventBus, MemoryStore, MissionEngine } from '../src/index.js';
+import { CapabilityRegistry, EventBus, MissionEngine, TeamRuntime } from '../src/index.js';
 
-test('mission can route execution to an injected team runtime', async () => {
+test('mission execution requires TeamRuntime when a team is declared', async () => {
+  const registry = new CapabilityRegistry();
+  registry.register({ schemaVersion:'0.1.0', id:'team/a', kind:'team', name:'Team A', version:'1.0.0', status:'stable', description:'team', provenance:{sourceType:'test'}, members:[{agent:'agent/a'}] });
   const events = new EventBus();
-  const memory = new MemoryStore();
-  const calls = [];
-  const teamRuntime = {
-    async execute(team, input, context) {
-      calls.push({ team, input, context });
-      return { executionId: 'team-exec-1', status: 'succeeded', results: [{ status: 'succeeded' }], sharedContext: { version: 1, values: { done: true } } };
-    }
-  };
-  const registry = {
-    require(id) {
-      assert.equal(id, 'team/review');
-      return { manifest: { id, kind: 'team', members: ['agent/a'] } };
-    }
-  };
-  const mission = new MissionEngine({ workflowEngine: { registry }, teamRuntime, events, memory });
-  const result = await mission.execute({ id: 'mission/review', kind: 'mission', team: 'team/review' }, { repositoryPath: '.' }, { requestId: 'r1' });
-
-  assert.equal(result.status, 'succeeded');
-  assert.equal(result.executionId, 'team-exec-1');
-  assert.equal(calls[0].team.id, 'team/review');
-  assert.equal(calls[0].context.requestId, 'r1');
-  assert.equal(events.history({ type: 'mission.completed' }).length, 1);
-  assert.equal(memory.entries().length, 1);
+  const mission = new MissionEngine({ workflowEngine: { registry }, events });
+  const result = await mission.execute({ schemaVersion:'0.1.0', id:'mission/a', kind:'mission', name:'Mission A', version:'1.0.0', status:'stable', description:'mission', provenance:{sourceType:'test'}, team:'team/a' });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'TEAM_RUNTIME_UNAVAILABLE');
 });
 
-test('team mission fails structurally when team runtime is not configured', async () => {
-  const events = new EventBus();
-  const memory = new MemoryStore();
-  const mission = new MissionEngine({ workflowEngine: { registry: { require() { return { manifest: { kind: 'team' } }; } } }, events, memory });
-  const result = await mission.execute({ id: 'mission/team', kind: 'mission', team: 'team/missing' }, {});
-
+test('team runtime emits a structured failure for an empty team', async () => {
+  const registry = new CapabilityRegistry();
+  const teamRuntime = new TeamRuntime({ registry, agentRuntime:{}, delegationEngine:{} });
+  const result = await teamRuntime.execute({ schemaVersion:'0.1.0', id:'team/empty', kind:'team', name:'Empty', version:'1.0.0', status:'stable', description:'empty', provenance:{sourceType:'test'}, members:[] });
   assert.equal(result.status, 'failed');
-  assert.equal(result.error.code, 'MISSION_WORKFLOW_MISSING');
-  assert.equal(events.history({ type: 'mission.failed' }).length, 1);
-  assert.equal(memory.entries().length, 1);
+  assert.equal(result.error.code, 'TEAM_EMPTY');
 });

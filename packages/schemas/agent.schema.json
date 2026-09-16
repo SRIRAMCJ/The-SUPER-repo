@@ -28,7 +28,8 @@
         "autonomy": { "type": "string", "enum": ["assistive", "supervised", "bounded", "autonomous"] },
         "timeoutSeconds": { "type": "integer", "minimum": 1 },
         "maxSteps": { "type": "integer", "minimum": 1 },
-        "requiresApproval": { "type": "boolean", "default": false }
+        "requiresApproval": { "type": "boolean", "default": false },
+        "mission": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" }
       }
     },
     "input": { "$ref": "#/definitions/ioContract" },

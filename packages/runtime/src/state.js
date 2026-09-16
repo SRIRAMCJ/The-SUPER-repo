@@ -38,6 +38,17 @@ export class ExecutionStateStore {
   async remove(executionId) {
     return this.#states.delete(executionId);
   }
+
+  async restore(states) {
+    if (!Array.isArray(states)) throw new TypeError('Execution states must be an array');
+    this.#states.clear();
+    for (const state of states) {
+      validateStateIdentity(state);
+      if (!Number.isInteger(state.version) || state.version < 0) throw new TypeError(`Invalid execution state version: ${state.executionId}`);
+      this.#states.set(state.executionId, freezeState(state));
+    }
+    return this.list();
+  }
 }
 
 export class FileExecutionStateStore extends ExecutionStateStore {
@@ -55,11 +66,7 @@ export class FileExecutionStateStore extends ExecutionStateStore {
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8'));
       if (!Array.isArray(parsed)) throw new Error('Execution state file must contain an array');
-      for (const state of parsed) {
-        validateStateIdentity(state);
-        await super.create(state);
-        await super.update(state.executionId, state, 0);
-      }
+      await super.restore(parsed);
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }

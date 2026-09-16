@@ -17,7 +17,7 @@ async function main() {
   if (maxFiles !== undefined && (!Number.isInteger(maxFiles) || maxFiles < 1)) throw new Error('--max-files must be a positive integer');
 
   const runtime = createRepositoryAnalystRuntime();
-  const result = await runtime.mission.execute(runtime.manifests.mission, {
+  const result = await runtime.agent.executeRequest('analyze this repository for engineering quality', {
     repositoryPath: path.resolve(repositoryPath),
     options: maxFiles ? { maxFiles } : undefined
   });
@@ -31,11 +31,12 @@ async function main() {
 
 function printHumanReport(result) {
   if (result.status !== 'succeeded') {
-    console.error(`Mission failed: ${result.error?.code ?? 'MISSION_ERROR'} — ${result.error?.message ?? 'Unknown error'}`);
+    console.error(`Agent failed: ${result.error?.code ?? 'AGENT_ERROR'} — ${result.error?.message ?? 'Unknown error'}`);
     return;
   }
   const report = result.output;
   const severity = report.summary.bySeverity;
+  console.log(`Agent: ${result.agentId}`);
   console.log(`Repository: ${report.repository.name}`);
   console.log(`Path: ${report.repository.path}`);
   console.log(`Files: ${report.inventory.files} | Directories: ${report.inventory.directories} | Bytes: ${report.inventory.bytes}`);

@@ -10,8 +10,8 @@ const base = (id, name, description, tags = []) => ({
 
 test('capability planner ranks matching agents deterministically', () => {
   const registry = new CapabilityRegistry();
-  registry.register(base('agent/repository-analyst', 'Repository Analyst', 'Analyze repository structure and engineering quality', ['repository', 'analysis']));
-  registry.register(base('agent/data-analyst', 'Data Analyst', 'Analyze datasets and statistical quality', ['data', 'analysis']));
+  registry.register(base('agent/repository-analyst', 'Repository Analyst', 'Analyze repository structure and engineering quality', ['repository', 'analysis']), async () => ({}));
+  registry.register(base('agent/data-analyst', 'Data Analyst', 'Analyze datasets and statistical quality', ['data', 'analysis']), async () => ({}));
   const planner = new CapabilityPlanner({ registry, clock: () => new Date('2026-01-01T00:00:00.000Z') });
 
   const plan = planner.plan('analyze this repository for engineering quality');
@@ -26,6 +26,7 @@ test('agent runtime resolves mission and emits lifecycle', async () => {
   const events = new EventBus();
   const mission = { schemaVersion: '0.1.0', id: 'mission/test', kind: 'mission', name: 'Test Mission', version: '0.1.0', status: 'alpha', description: 'Test mission', provenance: { sourceType: 'native' }, workflow: 'workflow/test' };
   const agent = { ...base('agent/test', 'Test Agent', 'Run a test task'), execution: { mode: 'task', autonomy: 'bounded', mission: mission.id } };
+  registry.register(agent, async () => ({}));
   registry.register(mission);
   const workflow = { schemaVersion: '0.1.0', id: 'workflow/test', kind: 'workflow', name: 'Test Workflow', version: '0.1.0', status: 'alpha', description: 'Test workflow', provenance: { sourceType: 'native' }, steps: [] };
   registry.register(workflow);

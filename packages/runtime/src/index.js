@@ -6,3 +6,5 @@ export { WorkflowEngine } from './workflow.js';
 export { MissionEngine } from './mission.js';
 export { VerificationEngine } from './verification.js';
 export { ExecutionAudit, MemoryStore } from './audit.js';
+export { CapabilityPlanner } from './planner.js';
+export { AgentRuntime } from './agent.js';

@@ -1,14 +1,22 @@
 import { createExecutionId } from './events.js';
+import { TaskGraphExecutor } from './task-graph-executor.js';
 
 export class MissionEngine {
-  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date(), stateStore = null }) {
+  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date(), stateStore = null, taskDecomposer = null, taskGraphExecutor = null, taskExecutor = null }) {
     if (!workflowEngine) throw new TypeError('MissionEngine requires workflowEngine');
+    if (taskGraphExecutor && typeof taskGraphExecutor.execute !== 'function') throw new TypeError('MissionEngine taskGraphExecutor must expose execute');
+    if (taskExecutor !== null && typeof taskExecutor !== 'function') throw new TypeError('MissionEngine taskExecutor must be a function');
+    if (taskExecutor && taskGraphExecutor) throw new TypeError('MissionEngine accepts either taskGraphExecutor or taskExecutor, not both');
+    if (taskDecomposer && !taskGraphExecutor && !taskExecutor) throw new TypeError('MissionEngine task execution requires taskExecutor or taskGraphExecutor');
+
     this.workflowEngine = workflowEngine;
     this.teamRuntime = teamRuntime;
     this.events = events;
     this.memory = memory;
     this.clock = clock;
     this.stateStore = stateStore;
+    this.taskDecomposer = taskDecomposer;
+    this.taskGraphExecutor = taskGraphExecutor ?? (taskExecutor ? new TaskGraphExecutor({ executeTask: taskExecutor, events, clock }) : null);
   }
 
   async execute(mission, input = {}, context = {}) {
@@ -20,7 +28,11 @@ export class MissionEngine {
 
     try {
       let result;
-      if (mission.team) {
+      if (mission.tasks !== undefined) {
+        if (!this.taskDecomposer || !this.taskGraphExecutor) throw Object.assign(new Error(`Mission requires task graph runtime: ${mission.id}`), { code: 'TASK_GRAPH_RUNTIME_UNAVAILABLE', retryable: false });
+        const taskPlan = this.taskDecomposer.decompose({ goal: mission.goal ?? mission.task ?? mission.name ?? mission.id, tasks: mission.tasks });
+        result = await this.taskGraphExecutor.execute(taskPlan, input, { ...context, missionExecutionId }, mission.execution ?? {});
+      } else if (mission.team) {
         if (!this.teamRuntime) throw Object.assign(new Error(`Mission requires team runtime: ${mission.team}`), { code: 'TEAM_RUNTIME_UNAVAILABLE' });
         const team = this.workflowEngine.registry.require(mission.team).manifest;
         result = await this.teamRuntime.execute(team, input, { ...context, missionExecutionId });

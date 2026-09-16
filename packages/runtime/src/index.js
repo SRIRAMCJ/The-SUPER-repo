@@ -13,6 +13,7 @@ export { ExecutionStateStore, FileExecutionStateStore, isTerminalExecutionStatus
 export { ExecutionRecovery } from './recovery.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
+export { TaskGraphExecutor } from './task-graph-executor.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

@@ -59,7 +59,7 @@ test('mission routes explicitly to a team', async () => {
 
 test('team members execute planned workflows and propagate request context', async () => {
   const { registry, team, events } = setup({ planned:true });
-  registry.register({...base('tool/a','tool')}, async (input, context) => ({ value:(input.value ?? 0) + 1, requestId:context.requestId }));
+  registry.register({...base('tool/a','tool')}, async (input, executionContext) => ({ value:(input.value ?? 0) + 1, requestId:executionContext.context.requestId }));
   registry.register({...base('workflow/a','workflow'), steps:[{capability:'tool/a'}]});
   registry.register({...base('mission/a','mission'), workflow:'workflow/a'});
   registry.register({...base('agent/research','agent'), role:'researcher', execution:{mission:'mission/a'}}, async () => null);

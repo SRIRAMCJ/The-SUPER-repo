@@ -14,7 +14,17 @@
     "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
     "status": { "type": "string", "enum": ["experimental", "alpha", "beta", "stable", "deprecated", "disabled"] },
     "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
-    "provenance": { "$ref": "capability.schema.json#/$defs/provenance" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType"],
+      "properties": {
+        "sourceType": { "type": "string", "enum": ["native", "adapted", "generated", "vendored", "external"] },
+        "source": { "type": "string", "maxLength": 1000 },
+        "sourceVersion": { "type": "string", "maxLength": 200 },
+        "attribution": { "type": "string", "maxLength": 2000 }
+      }
+    },
     "provider": { "type": "string", "minLength": 1 },
     "capabilities": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
     "contextWindow": { "type": "integer", "minimum": 1 },

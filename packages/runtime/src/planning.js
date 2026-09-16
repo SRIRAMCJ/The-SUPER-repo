@@ -16,7 +16,7 @@ export class RuntimePlanningBridge {
       if (!entry || typeof entry.handler !== 'function') continue;
       catalog.register({ id: manifest.id, version: manifest.version, domain: manifest.domain ?? this.defaultDomain, kind: manifest.kind, name: manifest.name, description: manifest.description, status: manifest.status, requires: manifest.requires ?? [], provenance: manifest.provenance ?? { sourceType: 'runtime' } });
     }
-    return new ExecutionPlanBuilder({ resolver: new CapabilityResolver({ catalog }) }).build(request);
+    return new ExecutionPlanBuilder({ resolver: new CapabilityResolver({ registry: catalog }) }).build(request);
   }
 
   async execute(request, input = {}, context = {}) {

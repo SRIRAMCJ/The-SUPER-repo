@@ -8,3 +8,6 @@ export { VerificationEngine } from './verification.js';
 export { ExecutionAudit, MemoryStore } from './audit.js';
 export { CapabilityPlanner } from './planner.js';
 export { AgentRuntime } from './agent.js';
+export { ModelProviderRegistry, ModelRuntime } from './models.js';
+export { ModelRouter } from './model-router.js';
+export { ReflectionEngine, createBasicOutputCritic } from './reflection.js';

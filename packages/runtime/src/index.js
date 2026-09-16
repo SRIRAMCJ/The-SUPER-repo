@@ -12,6 +12,7 @@ export { ExecutionAudit, MemoryStore } from './audit.js';
 export { ExecutionStateStore, FileExecutionStateStore, isTerminalExecutionStatus } from './state.js';
 export { ExecutionRecovery } from './recovery.js';
 export { EvaluationEngine } from './evaluation.js';
+export { BenchmarkEngine } from './benchmark.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

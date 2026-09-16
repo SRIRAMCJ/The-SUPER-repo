@@ -7,26 +7,34 @@ export class ExecutionAudit {
   }
 
   recordEvent(event) {
-    const executionId = event.executionId;
+    const executionId = event.executionId ?? event.missionExecutionId;
     if (!executionId) return;
     const record = this.records.get(executionId) ?? {
       executionId,
+      kind: inferKind(event.type),
       capabilityId: event.capabilityId,
       startedAt: null,
       finishedAt: null,
       status: 'unknown',
       events: []
     };
+    record.kind ??= inferKind(event.type);
     record.capabilityId ??= event.capabilityId;
     record.events.push(event);
-    if (event.type === 'execution.started') {
-      record.startedAt = event.timestamp;
+    const timestamp = event.timestamp ?? this.clock().toISOString();
+
+    if (isStartEvent(event.type)) {
+      record.startedAt ??= timestamp;
       record.status = 'running';
-    } else if (event.type === 'execution.completed') {
-      record.finishedAt = event.timestamp;
+    } else if (isSuccessEvent(event.type)) {
+      record.finishedAt = timestamp;
       record.status = 'succeeded';
-    } else if (event.type === 'execution.failed') {
-      record.finishedAt = event.timestamp;
+    } else if (isCancelledEvent(event.type)) {
+      record.finishedAt = timestamp;
+      record.status = 'cancelled';
+      record.error = event.error;
+    } else if (isFailureEvent(event.type)) {
+      record.finishedAt = timestamp;
       record.status = 'failed';
       record.error = event.error;
     }
@@ -43,6 +51,23 @@ export class ExecutionAudit {
   close() { this.unsubscribe?.(); }
 }
 
+const START_EVENTS = new Set(['execution.started', 'plan.started', 'plan.resumed', 'task-graph.started', 'task-graph.resumed', 'mission.started']);
+const SUCCESS_EVENTS = new Set(['execution.completed', 'plan.completed', 'task-graph.completed', 'mission.completed']);
+const CANCELLED_EVENTS = new Set(['execution.cancelled', 'task-graph.cancelled', 'mission.cancelled']);
+const FAILURE_EVENTS = new Set(['execution.failed', 'plan.failed', 'task-graph.failed', 'mission.failed']);
+
+function isStartEvent(type) { return START_EVENTS.has(type); }
+function isSuccessEvent(type) { return SUCCESS_EVENTS.has(type); }
+function isCancelledEvent(type) { return CANCELLED_EVENTS.has(type); }
+function isFailureEvent(type) { return FAILURE_EVENTS.has(type); }
+
+function inferKind(type) {
+  if (type?.startsWith('task-graph.') || type?.startsWith('task.')) return 'task-graph';
+  if (type?.startsWith('mission.')) return 'mission';
+  if (type?.startsWith('plan.')) return 'plan';
+  return 'execution';
+}
+
 export class MemoryStore {
   #items = [];
 
@@ -53,9 +78,6 @@ export class MemoryStore {
     return item;
   }
 
-  query(predicate = () => true) {
-    return this.#items.filter(predicate).map((item) => structuredClone(item));
-  }
-
+  query(predicate = () => true) { return this.#items.filter(predicate).map((item) => structuredClone(item)); }
   size() { return this.#items.length; }
 }

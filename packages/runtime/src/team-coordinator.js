@@ -1,5 +1,3 @@
-import { createExecutionId } from './events.js';
-
 export class TeamExecutionCoordinator {
   constructor({ delegationEngine, events = null, clock = () => new Date() } = {}) {
     if (!delegationEngine) throw new TypeError('TeamExecutionCoordinator requires delegationEngine');
@@ -30,11 +28,19 @@ export class TeamExecutionCoordinator {
       });
       const result = { index, agentId, task, ...delegated };
       const patch = { [`agent:${agentId}`]: delegated.result ?? delegated };
-      try {
-        sharedContext.commit(patch, { expectedVersion: snapshot.version, actor: agentId, reason: 'team-member-result' });
-      } catch (error) {
-        result.contextConflict = { code: error.code ?? 'CONTEXT_COMMIT_FAILED', message: error.message, retryable: Boolean(error.retryable) };
+      let committed = false;
+      let conflict = null;
+      for (let attempt = 0; attempt < 3 && !committed; attempt += 1) {
+        const targetVersion = attempt === 0 ? snapshot.version : sharedContext.snapshot().version;
+        try {
+          sharedContext.commit(patch, { expectedVersion: targetVersion, actor: agentId, reason: 'team-member-result' });
+          committed = true;
+        } catch (error) {
+          conflict = error;
+          if (error.code !== 'CONTEXT_VERSION_CONFLICT') break;
+        }
       }
+      if (!committed) result.contextConflict = { code: conflict?.code ?? 'CONTEXT_COMMIT_FAILED', message: conflict?.message ?? 'Shared context commit failed', retryable: Boolean(conflict?.retryable) };
       this.events?.emit({ type: result.status === 'succeeded' ? 'team.member.completed' : 'team.member.failed', executionId: context.executionId, teamId: team.id, status: result.status, data: result, error: result.error });
       return result;
     };
@@ -62,11 +68,8 @@ export class TeamExecutionCoordinator {
       }
     };
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
-    const completed = results.filter(Boolean);
-    if (completed.length < members.length) {
-      for (let index = 0; index < members.length; index += 1) {
-        if (!results[index]) results[index] = { index, status: 'cancelled', error: { code: 'TEAM_FAIL_FAST', message: 'Member was not started because fail-fast stopped scheduling', retryable: false } };
-      }
+    for (let index = 0; index < members.length; index += 1) {
+      if (!results[index]) results[index] = { index, status: 'cancelled', error: { code: 'TEAM_FAIL_FAST', message: 'Member was not started because fail-fast stopped scheduling', retryable: false } };
     }
     return { strategy: normalizedStrategy, results, context: sharedContext.snapshot() };
   }

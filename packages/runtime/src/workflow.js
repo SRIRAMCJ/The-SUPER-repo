@@ -1,13 +1,16 @@
 import { createExecutionId } from './events.js';
 
 export class WorkflowEngine {
-  constructor({ executionEngine, registry, policy = null, events = null, clock = () => new Date() }) {
+  constructor({ executionEngine, registry, policy = null, events = null, clock = () => new Date(), planBuilder = null, planExecutor = null }) {
     if (!executionEngine || !registry) throw new TypeError('WorkflowEngine requires executionEngine and registry');
+    if (Boolean(planBuilder) !== Boolean(planExecutor)) throw new TypeError('WorkflowEngine planBuilder and planExecutor must be provided together');
     this.executionEngine = executionEngine;
     this.registry = registry;
     this.policy = policy;
     this.events = events;
     this.clock = clock;
+    this.planBuilder = planBuilder;
+    this.planExecutor = planExecutor;
   }
 
   async execute(workflow, input = {}, context = {}) {
@@ -29,7 +32,9 @@ export class WorkflowEngine {
           return failed;
         }
 
-        const result = await this.executionEngine.execute(step.capability, current, context);
+        const result = this.planBuilder
+          ? await this.executePlannedStep(step, entry, current, context)
+          : await this.executionEngine.execute(step.capability, current, context);
         results.push({ step: step.id ?? step.capability, result });
         if (result.status !== 'succeeded') {
           const failed = { workflowExecutionId, workflowId: workflow.id, status: 'failed', startedAt, finishedAt: this.clock().toISOString(), results, error: result.error };
@@ -48,6 +53,19 @@ export class WorkflowEngine {
       this.events?.emit({ type: 'workflow.failed', executionId: workflowExecutionId, workflowId: workflow.id, status: 'failed', error: normalized });
       return { workflowExecutionId, workflowId: workflow.id, status: 'failed', startedAt, finishedAt: this.clock().toISOString(), results, error: normalized };
     }
+  }
+
+  async executePlannedStep(step, entry, input, context) {
+    const plan = this.planBuilder.build({
+      capabilityId: step.capability,
+      domain: context.domain ?? entry.manifest.domain ?? undefined
+    });
+    if (!plan.ok) return { status: 'failed', error: plan.error, plan };
+    const result = await this.planExecutor.execute(plan, input, {
+      ...context,
+      workflowStep: step.id ?? step.capability
+    });
+    return { ...result, plan };
   }
 }
 

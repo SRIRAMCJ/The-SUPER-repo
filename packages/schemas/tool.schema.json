@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-repo.dev/schemas/tool.schema.json",
+  "title": "SUPER Tool",
+  "description": "Executable tool contract with explicit authorization and side-effect declarations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "kind", "name", "version", "status", "description", "provenance", "operation", "risk", "permissions", "input", "output"],
+  "properties": {
+    "schemaVersion": { "const": "0.1.0" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+    "kind": { "const": "tool" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["experimental", "alpha", "beta", "stable", "deprecated", "disabled"] },
+    "description": { "type": "string", "minLength": 1 },
+    "provenance": { "$ref": "capability.schema.json#/properties/provenance" },
+    "operation": { "type": "string", "enum": ["read", "write", "execute", "network", "transform"] },
+    "risk": { "type": "string", "enum": ["none", "low", "medium", "high", "critical"] },
+    "permissions": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "sideEffects": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "input": { "$ref": "#/definitions/contract" },
+    "output": { "$ref": "#/definitions/contract" },
+    "timeoutSeconds": { "type": "integer", "minimum": 1 },
+    "idempotent": { "type": "boolean" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "definitions": {
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contentType"],
+      "properties": {
+        "contentType": { "type": "string", "minLength": 1 },
+        "schema": { "type": ["object", "string"] },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

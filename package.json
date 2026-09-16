@@ -6,6 +6,7 @@
   "type": "module",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "test:runtime": "npm --workspace @super/runtime test"
+    "test:runtime": "npm --workspace @super/runtime test",
+    "test:repository-analyst": "node --test packages/agents/repository-analyst/test/repository-analyst.test.js"
   }
 }

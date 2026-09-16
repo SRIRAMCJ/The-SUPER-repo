@@ -1,4 +1,4 @@
-import { CapabilityRegistry, EventBus, ExecutionEngine, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
+import { CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
 import { analyzeRepository, repositoryAnalyzerTool } from '../../../tools/repository/src/index.js';
 
 export const repositoryAnalystAgent = Object.freeze({
@@ -20,12 +20,14 @@ export const repositoryAnalystAgent = Object.freeze({
 
 export function createRepositoryAnalystRuntime({ clock } = {}) {
   const events = new EventBus();
+  const audit = new ExecutionAudit({ events, clock });
+  const memory = new MemoryStore();
   const registry = new CapabilityRegistry();
   const policy = new PolicyEngine();
   const verifier = new VerificationEngine({ checks: [verifyRepositoryReport] });
   const execution = new ExecutionEngine({ registry, events, verifier, clock });
-  const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events });
-  const mission = new MissionEngine({ workflowEngine: workflow, events });
+  const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events, clock });
+  const mission = new MissionEngine({ workflowEngine: workflow, events, memory, clock });
 
   registry.register(repositoryAnalyzerTool, async (input) => analyzeRepository(input.repositoryPath, input.options));
   const workflowManifest = {
@@ -40,7 +42,7 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   };
   registry.register(missionManifest);
 
-  return { events, registry, policy, verifier, execution, workflow, mission, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
+  return { events, audit, memory, registry, policy, verifier, execution, workflow, mission, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
 }
 
 function verifyRepositoryReport({ output }) {

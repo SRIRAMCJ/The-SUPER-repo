@@ -33,12 +33,12 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
     description: 'Runs the repository analyzer and returns its verified report.', provenance: { sourceType: 'native' },
     steps: [{ id: 'analyze', capability: repositoryAnalyzerTool.id }]
   };
-  registry.register(workflowManifest, async () => null);
+  registry.register(workflowManifest);
   const missionManifest = {
     schemaVersion: '0.1.0', id: 'mission/analyze-repository', kind: 'mission', name: 'Analyze Repository', version: '0.1.0', status: 'alpha',
     description: 'Analyze a repository and return a verified engineering report.', provenance: { sourceType: 'native' }, workflow: workflowManifest.id
   };
-  registry.register(missionManifest, async () => null);
+  registry.register(missionManifest);
 
   return { events, registry, policy, verifier, execution, workflow, mission, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
 }

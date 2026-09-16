@@ -21,8 +21,16 @@ test('execution can be cancelled externally and propagates an abort signal', asy
   const events = new EventBus();
   const cancellation = new ExecutionCancellationRegistry();
   const engine = new ExecutionEngine({ registry, events, cancellation });
+  let startedResolve;
+  let readyResolve;
+  const startedPromise = new Promise((resolve) => { startedResolve = resolve; });
+  const readyPromise = new Promise((resolve) => { readyResolve = resolve; });
   let aborted = false;
-  registry.register(capability('capability/wait'), async (_input, { signal }) => {
+
+  events.on('execution.started', startedResolve);
+  events.on('execution.progress', readyResolve);
+  registry.register(capability('capability/wait'), async (_input, { signal, emit }) => {
+    emit({ phase: 'ready' });
     await new Promise((resolve) => {
       signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true });
     });
@@ -30,7 +38,8 @@ test('execution can be cancelled externally and propagates an abort signal', asy
   });
 
   const executionPromise = engine.execute('capability/wait');
-  const started = await new Promise((resolve) => events.on('execution.started', resolve));
+  const started = await startedPromise;
+  await readyPromise;
   assert.equal(engine.cancel(started.executionId, 'user requested cancellation'), true);
   const result = await executionPromise;
 

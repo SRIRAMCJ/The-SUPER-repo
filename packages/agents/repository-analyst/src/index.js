@@ -1,4 +1,4 @@
-import { AgentRuntime, CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, ExecutionPlanExecutor, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine, RuntimePlanningBridge, DelegationEngine, HandoffProtocol, TeamRuntime, ReflectionEngine, createBasicOutputCritic } from '../../../runtime/src/index.js';
+import { AgentRuntime, CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, ExecutionPlanExecutor, ExecutionStateStore, ExecutionRecovery, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine, RuntimePlanningBridge, DelegationEngine, HandoffProtocol, TeamRuntime, ReflectionEngine, createBasicOutputCritic } from '../../../runtime/src/index.js';
 import { analyzeRepository, repositoryAnalyzerTool } from '../../../tools/repository/src/index.js';
 
 export const repositoryAnalystAgent = Object.freeze({
@@ -14,7 +14,7 @@ export const repositoryReviewTeam = Object.freeze({
   task: 'review repository', execution: { strategy: 'sequential', maxConcurrency: 1, failFast: true }, members: [{ agent: repositoryAnalystAgent.id, task: 'analyze repository structure, dependencies, git state, tests, and security hygiene' }]
 });
 
-export function createRepositoryAnalystRuntime({ clock } = {}) {
+export function createRepositoryAnalystRuntime({ clock, stateStore = new ExecutionStateStore() } = {}) {
   const events = new EventBus();
   const audit = new ExecutionAudit({ events, clock });
   const memory = new MemoryStore();
@@ -24,15 +24,16 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   const execution = new ExecutionEngine({ registry, events, verifier, policy, clock });
 
   registry.register(repositoryAnalyzerTool, async (input) => analyzeRepository(input.repositoryPath, input.options));
-  const planExecutor = new ExecutionPlanExecutor({ executionEngine: execution, events, clock });
+  const planExecutor = new ExecutionPlanExecutor({ executionEngine: execution, events, clock, stateStore });
   const planning = new RuntimePlanningBridge({ registry, planExecutor, defaultDomain: 'software' });
   const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events, clock, planBuilder: planning, planExecutor });
-  const mission = new MissionEngine({ workflowEngine: workflow, events, memory, clock });
+  const mission = new MissionEngine({ workflowEngine: workflow, events, memory, clock, stateStore });
   const agent = new AgentRuntime({ registry, missionEngine: mission, events, clock });
   const handoff = new HandoffProtocol();
   const delegation = new DelegationEngine({ agentRuntime: agent, handoffProtocol: handoff, events, clock });
   const reflection = new ReflectionEngine({ critics: [createBasicOutputCritic()] });
   const team = new TeamRuntime({ registry, agentRuntime: agent, delegationEngine: delegation, reflection, events, clock });
+  const recovery = new ExecutionRecovery({ stateStore, planExecutor });
   mission.teamRuntime = team;
 
   const workflowManifest = {
@@ -47,7 +48,7 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   registry.register(repositoryAnalystAgent, async () => ({ delegated: true }));
   registry.register(repositoryReviewTeam);
 
-  return { events, audit, memory, registry, policy, verifier, execution, planning, planExecutor, workflow, mission, agent, delegation, reflection, team, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest, team: repositoryReviewTeam } };
+  return { events, audit, memory, registry, policy, verifier, execution, stateStore, recovery, planning, planExecutor, workflow, mission, agent, delegation, reflection, team, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest, team: repositoryReviewTeam } };
 }
 
 function verifyRepositoryReport({ output }) {

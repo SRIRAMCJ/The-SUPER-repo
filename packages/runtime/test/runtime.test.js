@@ -22,7 +22,7 @@ test('execution engine emits lifecycle events and returns output', async () => {
   const result = await engine.execute('test/echo', {value:'ok'});
   assert.equal(result.status, 'succeeded');
   assert.deepEqual(result.output, {echoed:'ok'});
-  assert.deepEqual(events.history().map((e) => e.type), ['execution.started','execution.progress','execution.completed']);
+  assert.deepEqual(events.history().map((e) => e.type), ['execution.started','execution.progress','execution.verified','execution.completed']);
 });
 
 test('execution engine captures failures without losing execution identity', async () => {

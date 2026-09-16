@@ -1,14 +1,20 @@
 import { createExecutionId } from './events.js';
 
 export class MissionEngine {
-  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date(), stateStore = null }) {
+  constructor({ workflowEngine, teamRuntime = null, events = null, memory = null, clock = () => new Date(), stateStore = null, taskDecomposer = null, taskGraphExecutor = null, taskExecutor = null }) {
     if (!workflowEngine) throw new TypeError('MissionEngine requires workflowEngine');
+    if ((taskDecomposer || taskGraphExecutor || taskExecutor) && (!taskDecomposer || !taskGraphExecutor || typeof taskExecutor !== 'function')) {
+      throw new TypeError('MissionEngine task execution requires taskDecomposer, taskGraphExecutor and taskExecutor');
+    }
     this.workflowEngine = workflowEngine;
     this.teamRuntime = teamRuntime;
     this.events = events;
     this.memory = memory;
     this.clock = clock;
     this.stateStore = stateStore;
+    this.taskDecomposer = taskDecomposer;
+    this.taskGraphExecutor = taskGraphExecutor;
+    this.taskExecutor = taskExecutor;
   }
 
   async execute(mission, input = {}, context = {}) {
@@ -20,7 +26,11 @@ export class MissionEngine {
 
     try {
       let result;
-      if (mission.team) {
+      if (mission.tasks) {
+        if (!this.taskDecomposer || !this.taskGraphExecutor) throw Object.assign(new Error(`Mission requires task graph runtime: ${mission.id}`), { code: 'TASK_GRAPH_RUNTIME_UNAVAILABLE', retryable: false });
+        const taskPlan = this.taskDecomposer.decompose({ goal: mission.task ?? mission.name ?? mission.id, tasks: mission.tasks });
+        result = await this.taskGraphExecutor.execute(taskPlan, input, { ...context, missionExecutionId }, mission.execution ?? {});
+      } else if (mission.team) {
         if (!this.teamRuntime) throw Object.assign(new Error(`Mission requires team runtime: ${mission.team}`), { code: 'TEAM_RUNTIME_UNAVAILABLE' });
         const team = this.workflowEngine.registry.require(mission.team).manifest;
         result = await this.teamRuntime.execute(team, input, { ...context, missionExecutionId });

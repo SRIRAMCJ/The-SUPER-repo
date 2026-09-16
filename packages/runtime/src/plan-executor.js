@@ -17,7 +17,7 @@ export class ExecutionPlanExecutor {
     return this.#run(plan, executionId, startedAt, 1, input, [], context, 1, false);
   }
 
-  async resume(plan, executionId, context = {}) {
+  async resume(plan, executionId, context = {}, options = {}) {
     validatePlan(plan);
     if (!this.stateStore) throw Object.assign(new Error('Execution state store is required for resume'), { code: 'EXECUTION_STATE_UNAVAILABLE', retryable: false });
     const state = await this.stateStore.get(executionId);
@@ -26,6 +26,7 @@ export class ExecutionPlanExecutor {
     if (state.root !== plan.root) return failure(executionId, plan.root, 'EXECUTION_STATE_PLAN_MISMATCH', `Execution state root does not match plan: ${executionId}`);
     if (state.status === 'succeeded') return { executionId, root: plan.root, status: 'succeeded', output: state.output, verification: state.verification ?? null, results: state.results ?? [], resumed: false };
     if (isTerminalExecutionStatus(state.status) && state.status !== 'failed') return failure(executionId, plan.root, 'EXECUTION_NOT_RESUMABLE', `Execution is not resumable: ${state.status}`);
+    if (state.status === 'running' && !options.allowRunning) return failure(executionId, plan.root, 'EXECUTION_ALREADY_RUNNING', `Execution is already running: ${executionId}`);
     if (!Number.isInteger(state.nextStep) || state.nextStep < 1 || state.nextStep > plan.steps.length) return failure(executionId, plan.root, 'EXECUTION_STATE_CURSOR_INVALID', `Invalid resume cursor for ${executionId}`);
 
     const claimed = await this.stateStore.update(executionId, { status: 'running', attempt: (state.attempt ?? 1) + 1, error: null }, state.version);

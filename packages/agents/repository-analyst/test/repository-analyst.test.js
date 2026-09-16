@@ -46,3 +46,23 @@ test('repository analyst flags missing README and test script', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('repository analyst can be selected and executed from a natural-language request', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'super-repo-analyst-'));
+  try {
+    await writeFile(path.join(root, 'README.md'), '# Fixture\n');
+    await writeFile(path.join(root, '.gitignore'), 'node_modules\n');
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', scripts: { test: 'node --test' } }));
+    const runtime = createRepositoryAnalystRuntime();
+    const result = await runtime.agent.executeRequest('analyze this repository for engineering quality', { repositoryPath: root });
+
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.plan.selection.capabilityId, runtime.manifests.agent.id);
+    assert.ok(result.plan.selection.score > 0.4);
+    assert.equal(result.output.type, 'repository-analysis');
+    assert.equal(runtime.events.history({ type: 'agent.started' }).length, 1);
+    assert.equal(runtime.events.history({ type: 'agent.completed' }).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

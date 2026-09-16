@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CapabilityRegistry, EventBus, ExecutionEngine, ExecutionPlanExecutor, PolicyEngine, RuntimePlanningBridge, VerificationEngine, WorkflowEngine } from '../src/index.js';
+import { CapabilityRegistry, EventBus, ExecutionEngine, ExecutionPlanExecutor, RuntimePlanningBridge, VerificationEngine, WorkflowEngine } from '../src/index.js';
 
 const tool = (id, requires = []) => ({
   schemaVersion: '0.1.0',
@@ -30,24 +30,11 @@ test('workflow executes a deterministic plan through the existing execution boun
   const execution = new ExecutionEngine({ registry, events, verifier: new VerificationEngine() });
   const planExecutor = new ExecutionPlanExecutor({ executionEngine: execution, events });
   const planning = new RuntimePlanningBridge({ registry, planExecutor });
-  const workflow = new WorkflowEngine({
-    registry,
-    executionEngine: execution,
-    events,
-    planBuilder: planning,
-    planExecutor
-  });
+  const workflow = new WorkflowEngine({ registry, executionEngine: execution, events, planBuilder: planning, planExecutor });
 
   const manifest = {
-    schemaVersion: '0.1.0',
-    id: 'workflow/test-planning',
-    kind: 'workflow',
-    name: 'Planning Test',
-    version: '1.0.0',
-    status: 'stable',
-    description: 'Test workflow',
-    provenance: { sourceType: 'test' },
-    steps: [{ id: 'run-root', capability: 'tool/root' }]
+    schemaVersion: '0.1.0', id: 'workflow/test-planning', kind: 'workflow', name: 'Planning Test', version: '1.0.0', status: 'stable',
+    description: 'Test workflow', provenance: { sourceType: 'test' }, steps: [{ id: 'run-root', capability: 'tool/root' }]
   };
   const result = await workflow.execute(manifest, 'input', { requestId: 'plan-test' });
 
@@ -75,7 +62,7 @@ test('workflow returns a structured planning failure when a dependency is unavai
 
   const result = await workflow.execute(manifest, {});
   assert.equal(result.status, 'failed');
-  assert.equal(result.error.code, 'MISSING_DEPENDENCY');
+  assert.equal(result.error.code, 'DEPENDENCY_MISSING');
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0].result.status, 'failed');
 });

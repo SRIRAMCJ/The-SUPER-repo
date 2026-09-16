@@ -12,3 +12,7 @@ export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';
 export { ReflectionEngine, createBasicOutputCritic } from './reflection.js';
 export { AdaptiveAgentRuntime } from './adaptive.js';
+export { HandoffProtocol } from './handoff.js';
+export { DelegationEngine } from './delegation.js';
+export { TeamRuntime } from './team.js';
+export { TeamBuilder } from './team-builder.js';

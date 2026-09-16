@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-repo.dev/schemas/team.schema.json",
+  "title": "SUPER Team",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "kind", "name", "version", "status", "description", "provenance", "members"],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "0.1.0" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$" },
+    "kind": { "const": "team" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "enum": ["experimental", "alpha", "beta", "stable", "deprecated", "disabled"] },
+    "description": { "type": "string", "minLength": 1 },
+    "provenance": { "type": "object", "additionalProperties": true },
+    "task": { "type": "string" },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agent"],
+            "properties": {
+              "agent": { "type": "string", "minLength": 1 },
+              "task": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}

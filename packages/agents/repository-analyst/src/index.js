@@ -13,7 +13,7 @@ export const repositoryAnalystAgent = Object.freeze({
   role: 'Repository analysis and engineering quality assessment',
   capabilities: ['tool/repository-analyzer'],
   tools: ['tool/repository-analyzer'],
-  execution: { mode: 'task', autonomy: 'bounded', maxSteps: 1, requiresApproval: false },
+  execution: { mode: 'task', autonomy: 'bounded', maxSteps: 1, requiresApproval: false, mission: 'mission/analyze-repository' },
   input: { contentType: 'application/json', schema: { repositoryPath: 'string' }, required: true },
   output: { contentType: 'application/json', required: true }
 });

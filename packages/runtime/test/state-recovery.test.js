@@ -86,15 +86,15 @@ test('plan execution records a recovery cursor and resumes only the failed step'
 test('concurrent resume attempts are serialized by the state version', async () => {
   const stateStore = new ExecutionStateStore();
   let calls = 0;
-  const executionEngine = { async execute() { calls += 1; return { status: 'failed', error: { code: 'RETRY', message: 'retry', retryable: true } }; } };
+  const executionEngine = { async execute() { calls += 1; await new Promise((resolve) => setTimeout(resolve, 5)); return { status: 'succeeded', output: { done: true }, verification: { verified: true } }; } };
   const executor = new ExecutionPlanExecutor({ executionEngine, stateStore });
-  const first = await executor.execute({ ...plan(), steps: [{ ...plan().steps[0], capabilityId: 'capability/final' }], root: 'capability/final', stepCount: 1 }, {});
+  const oneStepPlan = { ...plan(), steps: [{ ...plan().steps[0], capabilityId: 'capability/final' }], root: 'capability/final', stepCount: 1 };
+  const failingEngine = { async execute() { return { status: 'failed', error: { code: 'RETRY', message: 'retry', retryable: true } }; } };
+  const failingExecutor = new ExecutionPlanExecutor({ executionEngine: failingEngine, stateStore });
+  const first = await failingExecutor.execute(oneStepPlan, {});
   const recovery = new ExecutionRecovery({ stateStore, planExecutor: executor });
-  const [a, b] = await Promise.all([
-    recovery.resume({ ...plan(), steps: [{ ...plan().steps[0], capabilityId: 'capability/final' }], root: 'capability/final', stepCount: 1 }, first.executionId),
-    recovery.resume({ ...plan(), steps: [{ ...plan().steps[0], capabilityId: 'capability/final' }], root: 'capability/final', stepCount: 1 }, first.executionId)
-  ]);
-  assert.equal([a, b].filter((result) => result.status === 'succeeded').length, 0);
+  const [a, b] = await Promise.all([recovery.resume(oneStepPlan, first.executionId), recovery.resume(oneStepPlan, first.executionId)]);
+  assert.equal([a, b].filter((result) => result.status === 'succeeded').length, 1);
   assert.equal([a, b].filter((result) => result.error?.code === 'EXECUTION_STATE_CONFLICT').length, 1);
-  assert.equal(calls, 3);
+  assert.equal(calls, 1);
 });

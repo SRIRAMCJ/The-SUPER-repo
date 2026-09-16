@@ -1,4 +1,4 @@
-import { AgentRuntime, CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
+import { AgentRuntime, CapabilityRegistry, EventBus, ExecutionAudit, ExecutionEngine, ExecutionPlanExecutor, MemoryStore, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine, RuntimePlanningBridge } from '../../../runtime/src/index.js';
 import { analyzeRepository, repositoryAnalyzerTool } from '../../../tools/repository/src/index.js';
 
 export const repositoryAnalystAgent = Object.freeze({
@@ -25,15 +25,19 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   const registry = new CapabilityRegistry();
   const policy = new PolicyEngine();
   const verifier = new VerificationEngine({ checks: [verifyRepositoryReport] });
-  const execution = new ExecutionEngine({ registry, events, verifier, clock });
-  const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events, clock });
+  const execution = new ExecutionEngine({ registry, events, verifier, policy, clock });
+
+  registry.register(repositoryAnalyzerTool, async (input) => analyzeRepository(input.repositoryPath, input.options));
+
+  const planExecutor = new ExecutionPlanExecutor({ executionEngine: execution, events, clock });
+  const planning = new RuntimePlanningBridge({ registry, planExecutor, defaultDomain: 'software' });
+  const workflow = new WorkflowEngine({ registry, executionEngine: execution, policy, events, clock, planBuilder: planning, planExecutor });
   const mission = new MissionEngine({ workflowEngine: workflow, events, memory, clock });
   const agent = new AgentRuntime({ registry, missionEngine: mission, events, clock });
 
-  registry.register(repositoryAnalyzerTool, async (input) => analyzeRepository(input.repositoryPath, input.options));
   const workflowManifest = {
     schemaVersion: '0.1.0', id: 'workflow/repository-analysis', kind: 'workflow', name: 'Repository Analysis', version: '0.1.0', status: 'alpha',
-    description: 'Runs the repository analyzer and returns its verified report.', provenance: { sourceType: 'native' },
+    description: 'Runs the repository analyzer through a deterministic execution plan and returns its verified report.', provenance: { sourceType: 'native' },
     steps: [{ id: 'analyze', capability: repositoryAnalyzerTool.id }]
   };
   registry.register(workflowManifest);
@@ -44,7 +48,7 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   registry.register(missionManifest);
   registry.register(repositoryAnalystAgent, async () => ({ delegated: true }));
 
-  return { events, audit, memory, registry, policy, verifier, execution, workflow, mission, agent, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
+  return { events, audit, memory, registry, policy, verifier, execution, planning, planExecutor, workflow, mission, agent, manifests: { agent: repositoryAnalystAgent, workflow: workflowManifest, mission: missionManifest } };
 }
 
 function verifyRepositoryReport({ output }) {

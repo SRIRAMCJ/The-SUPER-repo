@@ -1,5 +1,5 @@
-import { CapabilityRegistry, EventBus, ExecutionEngine, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '@super/runtime';
-import { analyzeRepository, repositoryAnalyzerTool } from '@super/tool-repository';
+import { CapabilityRegistry, EventBus, ExecutionEngine, MissionEngine, PolicyEngine, VerificationEngine, WorkflowEngine } from '../../../runtime/src/index.js';
+import { analyzeRepository, repositoryAnalyzerTool } from '../../../tools/repository/src/index.js';
 
 export const repositoryAnalystAgent = Object.freeze({
   schemaVersion: '0.1.0',

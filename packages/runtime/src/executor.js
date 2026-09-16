@@ -1,13 +1,19 @@
 import { createExecutionId } from './events.js';
+import { ExecutionCancellationRegistry } from './cancellation.js';
 
 export class ExecutionEngine {
-  constructor({ registry, events = null, verifier = null, policy = null, clock = () => new Date() }) {
+  constructor({ registry, events = null, verifier = null, policy = null, clock = () => new Date(), cancellation = new ExecutionCancellationRegistry() }) {
     if (!registry) throw new TypeError('ExecutionEngine requires a capability registry');
     this.registry = registry;
     this.events = events;
     this.verifier = verifier;
     this.policy = policy;
     this.clock = clock;
+    this.cancellation = cancellation;
+  }
+
+  cancel(executionId, reason = 'Execution cancelled') {
+    return this.cancellation.cancel(executionId, reason);
   }
 
   async execute(capabilityId, input = {}, context = {}) {
@@ -27,8 +33,9 @@ export class ExecutionEngine {
     }
 
     this.#emit({ type:'execution.started', executionId, capabilityId, status:'started', data:{ input, context } });
+    const controller = new AbortController();
+    const cancellation = this.cancellation.register(executionId, controller);
     try {
-      const controller = new AbortController();
       const timeoutMs = Number.isFinite(manifest.timeoutSeconds) ? manifest.timeoutSeconds * 1000 : null;
       const handlerPromise = Promise.resolve().then(() => handler(input, {
         executionId,
@@ -37,7 +44,9 @@ export class ExecutionEngine {
         signal: controller.signal,
         emit: (data) => this.#emit({ type:'execution.progress', executionId, capabilityId, status:'progress', data })
       }));
-      const output = timeoutMs ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id) : await handlerPromise;
+      const output = timeoutMs
+        ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id, cancellation)
+        : await Promise.race([handlerPromise, cancellation]);
       const verification = this.verifier
         ? await this.verifier.verify({ capability: manifest, input, output, context })
         : { verified: true, checks: 0, failures: [] };
@@ -53,13 +62,15 @@ export class ExecutionEngine {
       const normalized = normalizeError(error);
       this.#emit({ type:'execution.failed', executionId, capabilityId, status:'failed', error:normalized });
       return { executionId, capabilityId, status:'failed', startedAt, finishedAt:this.clock().toISOString(), error:normalized };
+    } finally {
+      this.cancellation.unregister(executionId);
     }
   }
 
   #emit(event) { return this.events?.emit(event); }
 }
 
-async function withTimeout(promise, timeoutMs, controller, capabilityId) {
+async function withTimeout(promise, timeoutMs, controller, capabilityId, cancellation) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
@@ -67,7 +78,7 @@ async function withTimeout(promise, timeoutMs, controller, capabilityId) {
       reject(Object.assign(new Error(`Execution timed out after ${timeoutMs}ms: ${capabilityId}`), { code:'EXECUTION_TIMEOUT', retryable:true }));
     }, timeoutMs);
   });
-  try { return await Promise.race([promise, timeout]); }
+  try { return await Promise.race([promise, timeout, cancellation]); }
   finally { clearTimeout(timer); }
 }
 

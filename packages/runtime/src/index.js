@@ -1,6 +1,7 @@
 export { CapabilityRegistry, validateCapability } from './registry.js';
 export { EventBus, createExecutionId } from './events.js';
 export { ExecutionEngine } from './executor.js';
+export { ExecutionCancellationRegistry } from './cancellation.js';
 export { ExecutionPlanExecutor } from './plan-executor.js';
 export { RuntimePlanningBridge } from './planning.js';
 export { PolicyEngine } from './policy.js';

@@ -20,10 +20,10 @@ function setup() {
 
 test('team runtime delegates members and preserves shared state', async () => {
   const { registry, team, events } = setup();
-  registry.register({...base('mission/a','mission'), workflow:'workflow/a'});
-  registry.register({...base('workflow/a','workflow'), steps:[{capability:'tool/a'}]});
+  registry.register({...base('mission/a','mission'), workflow:'workflow/a'}, async () => null);
+  registry.register({...base('workflow/a','workflow'), steps:[{capability:'tool/a'}]}, async () => null);
   registry.register({...base('tool/a','tool')}, async (input) => ({ count: (input.count ?? 0) + 1 }));
-  registry.register({...base('agent/a','agent'), role:'researcher', execution:{mission:'mission/a'}});
+  registry.register({...base('agent/a','agent'), role:'researcher', execution:{mission:'mission/a'}}, async () => null);
   const result = await team.execute({...base('team/test','team'), task:'research', members:[{agent:'agent/a',task:'research'}]}, {count:1});
   assert.equal(result.status, 'succeeded');
   assert.equal(result.results.length, 1);
@@ -34,7 +34,7 @@ test('team runtime delegates members and preserves shared state', async () => {
 
 test('delegation limit produces a structured failure', async () => {
   const { registry, delegation } = setup();
-  registry.register({...base('agent/a','agent'), execution:{mission:'mission/a'}});
+  registry.register({...base('agent/a','agent'), execution:{mission:'mission/a'}}, async () => null);
   const result = await delegation.delegate({toAgent:'agent/a', task:'x', context:{delegationCount:8}});
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'DELEGATION_LIMIT');
@@ -47,8 +47,8 @@ test('handoff rejects oversized payloads', () => {
 
 test('team builder creates a deterministic team from agent candidates', () => {
   const { registry, planner } = setup();
-  registry.register({...base('agent/research','agent'), role:'researcher', description:'research repository and investigate issues'});
-  registry.register({...base('agent/design','agent'), role:'designer', description:'design interfaces'});
+  registry.register({...base('agent/research','agent'), role:'researcher', description:'research repository and investigate issues'}, async () => null);
+  registry.register({...base('agent/design','agent'), role:'designer', description:'design interfaces'}, async () => null);
   const builder = new TeamBuilder({ registry, planner });
   const result = builder.build('research repository', { maxMembers:2 });
   assert.equal(result.kind, 'team');

@@ -1,0 +1,11 @@
+{
+  "name": "the-super-repo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SUPER — an executable, provider-agnostic AI operating system and agent runtime.",
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test:runtime": "npm --workspace @super/runtime test"
+  }
+}

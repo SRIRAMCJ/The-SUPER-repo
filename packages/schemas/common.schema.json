@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super-repo.dev/schemas/common.schema.json",
+  "title": "SUPER Common Contracts",
+  "type": "object",
+  "$defs": {
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9._-]*$" },
+        "type": { "type": ["string", "object"] },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType"],
+      "properties": {
+        "sourceType": { "type": "string", "enum": ["native", "adapted", "generated", "vendored", "external"] },
+        "source": { "type": "string", "maxLength": 1000 },
+        "sourceVersion": { "type": "string", "maxLength": 200 },
+        "attribution": { "type": "string", "maxLength": 2000 }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://super-repo.dev/schemas/mission.schema.json",
+  "title":"SUPER Mission",
+  "type":"object","additionalProperties":false,
+  "required":["schemaVersion","id","kind","name","version","status","description","provenance","objective","constraints"],
+  "properties":{
+    "schemaVersion":{"type":"string","const":"0.1.0"},"id":{"type":"string","pattern":"^[a-z0-9][a-z0-9._/-]*$"},"kind":{"const":"mission"},"name":{"type":"string","minLength":1,"maxLength":120},"version":{"type":"string","pattern":"^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},"status":{"type":"string","enum":["experimental","alpha","beta","stable","deprecated","disabled"]},"description":{"type":"string","minLength":1,"maxLength":2000},"provenance":{"$ref":"common.schema.json#/$defs/provenance"},
+    "objective":{"type":"string","minLength":1,"maxLength":5000},"constraints":{"type":"array","items":{"type":"string","maxLength":2000}},"inputs":{"type":"object","additionalProperties":true},"requestedBy":{"type":"string","maxLength":500},"priority":{"type":"string","enum":["low","normal","high","critical"]},"deadline":{"type":"string","format":"date-time"},"metadata":{"type":"object","additionalProperties":true}
+  }
+}

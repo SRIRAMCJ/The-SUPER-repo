@@ -1,0 +1,10 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://super-repo.dev/schemas/event.schema.json",
+  "title":"SUPER Event",
+  "type":"object","additionalProperties":false,
+  "required":["schemaVersion","id","type","timestamp","executionId"],
+  "properties":{
+    "schemaVersion":{"type":"string","const":"0.1.0"},"id":{"type":"string","minLength":1,"maxLength":200},"type":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]*$"},"timestamp":{"type":"string","format":"date-time"},"executionId":{"type":"string","minLength":1,"maxLength":200},"missionId":{"type":"string","maxLength":200},"capabilityId":{"type":"string","maxLength":500},"stepId":{"type":"string","maxLength":200},"status":{"type":"string","enum":["started","progress","completed","failed","cancelled"]},"data":{"type":"object","additionalProperties":true},"error":{"type":"object","additionalProperties":false,"required":["code","message"],"properties":{"code":{"type":"string","maxLength":200},"message":{"type":"string","maxLength":4000},"retryable":{"type":"boolean"}}},"metadata":{"type":"object","additionalProperties":true}
+  }
+}

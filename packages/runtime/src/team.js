@@ -23,21 +23,10 @@ export class TeamRuntime {
     this.events?.emit({ type: 'team.started', executionId, teamId: team.id, status: 'started', data: { memberCount: members.length } });
     const sharedContext = new SharedContext(context.teamState ?? {}, { clock: this.clock });
     try {
-      const execution = await this.coordinator.execute({
-        team,
-        members,
-        input,
-        context: { ...context, executionId },
-        sharedContext,
-        strategy: options.strategy ?? team.execution?.strategy ?? 'sequential',
-        maxConcurrency: options.maxConcurrency ?? team.execution?.maxConcurrency ?? 4,
-        failFast: options.failFast ?? team.execution?.failFast ?? true
-      });
+      const execution = await this.coordinator.execute({ team, members, input, context: { ...context, executionId }, sharedContext, strategy: options.strategy ?? team.execution?.strategy ?? 'sequential', maxConcurrency: options.maxConcurrency ?? team.execution?.maxConcurrency ?? 4, failFast: options.failFast ?? team.execution?.failFast ?? true });
       const failed = execution.results.some((result) => result.status !== 'succeeded');
       const synthesis = failed ? null : synthesizeResults(execution.results, execution.context);
-      const reflection = this.reflection
-        ? await this.reflection.evaluate({ request: team.task ?? team.name, result: { status: failed ? 'failed' : 'succeeded', results: execution.results, sharedContext: execution.context }, context })
-        : null;
+      const reflection = this.reflection ? await this.reflection.evaluate({ request: team.task ?? team.name, result: { status: failed ? 'failed' : 'succeeded', results: execution.results, sharedContext: execution.context }, context }) : null;
       const reflectionRejected = reflection?.status === 'rejected';
       const status = failed || reflectionRejected ? 'failed' : 'succeeded';
       const output = { executionId, teamId: team.id, startedAt, finishedAt: this.clock().toISOString(), status, strategy: execution.strategy, results: execution.results, sharedContext: execution.context, synthesis, reflection };

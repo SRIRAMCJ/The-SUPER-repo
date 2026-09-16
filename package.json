@@ -4,7 +4,7 @@
   "private": true,
   "description": "SUPER — an executable, provider-agnostic AI operating system and agent runtime.",
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": ["packages/*", "packages/*/*", "apps/*"],
   "scripts": {
     "test:runtime": "npm --workspace @super/runtime test",
     "test:repository-analyst": "node --test packages/agents/repository-analyst/test/repository-analyst.test.js"

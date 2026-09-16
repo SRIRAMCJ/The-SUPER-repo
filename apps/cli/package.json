@@ -1,0 +1,8 @@
+{
+  "name": "@super/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "super": "src/index.js" },
+  "scripts": { "start": "node src/index.js" }
+}

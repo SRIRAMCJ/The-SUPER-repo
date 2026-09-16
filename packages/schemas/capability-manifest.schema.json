@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://super.repo/schemas/capability-manifest.schema.json",
+  "title": "SUPER Capability Manifest",
+  "type": "object",
+  "required": ["id", "version", "domain", "kind", "name", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "domain": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "enum": ["agent", "skill", "command", "tool", "workflow", "team", "template", "example", "benchmark"] },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "entrypoint": { "type": "string", "minLength": 1 },
+    "requires": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "relationship"],
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string", "minLength": 1 },
+          "relationship": { "type": "string", "enum": ["inspired-by", "adapted-from", "validated-against", "derived-from"] },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

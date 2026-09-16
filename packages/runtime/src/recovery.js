@@ -10,12 +10,16 @@ export class ExecutionRecovery {
     return this.stateStore.get(executionId);
   }
 
-  async listRecoverable() {
+  async listRecoverable({ includeRunning = false } = {}) {
     const states = await this.stateStore.list();
-    return states.filter((state) => state.status === 'running' || state.status === 'failed');
+    return states.filter((state) => state.status === 'failed' || (includeRunning && state.status === 'running'));
   }
 
   async resume(plan, executionId, context = {}) {
     return this.planExecutor.resume(plan, executionId, context);
+  }
+
+  async recover(plan, executionId, context = {}) {
+    return this.planExecutor.resume(plan, executionId, context, { allowRunning: true });
   }
 }

@@ -8,6 +8,7 @@ export class MissionEngine {
     if (taskExecutor !== null && typeof taskExecutor !== 'function') throw new TypeError('MissionEngine taskExecutor must be a function');
     if (taskExecutor && taskGraphExecutor) throw new TypeError('MissionEngine accepts either taskGraphExecutor or taskExecutor, not both');
     if (taskDecomposer && !taskGraphExecutor && !taskExecutor) throw new TypeError('MissionEngine task execution requires taskExecutor or taskGraphExecutor');
+    if (taskGraphExecutor && stateStore && taskGraphExecutor.stateStore && taskGraphExecutor.stateStore !== stateStore) throw new TypeError('MissionEngine taskGraphExecutor state store must match mission state store');
 
     this.workflowEngine = workflowEngine;
     this.teamRuntime = teamRuntime;
@@ -16,7 +17,7 @@ export class MissionEngine {
     this.clock = clock;
     this.stateStore = stateStore;
     this.taskDecomposer = taskDecomposer;
-    this.taskGraphExecutor = taskGraphExecutor ?? (taskExecutor ? new TaskGraphExecutor({ executeTask: taskExecutor, events, clock }) : null);
+    this.taskGraphExecutor = taskGraphExecutor ?? (taskExecutor ? new TaskGraphExecutor({ executeTask: taskExecutor, events, clock, stateStore }) : null);
   }
 
   async execute(mission, input = {}, context = {}) {
@@ -40,9 +41,8 @@ export class MissionEngine {
         result = await this.executeWorkflow(mission, input, { ...context, missionExecutionId });
       }
       const missionResult = { missionId: mission.id, missionExecutionId, startedAt, finishedAt: this.clock().toISOString(), ...result };
-      const type = result.status === 'succeeded' ? 'mission.completed' : 'mission.failed';
       if (this.stateStore) await this.stateStore.update(missionExecutionId, { status: result.status, childExecutionId: result.executionId ?? result.workflowExecutionId ?? null, result: missionResult, finishedAt: missionResult.finishedAt, error: result.error ?? null }, undefined);
-      this.events?.emit({ type, missionId: mission.id, missionExecutionId, status: result.status, data: missionResult, error: result.error });
+      this.events?.emit({ type: result.status === 'succeeded' ? 'mission.completed' : 'mission.failed', missionId: mission.id, missionExecutionId, status: result.status, data: missionResult, error: result.error });
       this.memory?.append({ type: 'mission-execution', missionId: mission.id, status: result.status, executionId: missionExecutionId, childExecutionId: result.executionId ?? result.workflowExecutionId ?? null, result: missionResult });
       return missionResult;
     } catch (error) {

@@ -47,7 +47,7 @@ test('claims recovery with optimistic concurrency and validates the plan', async
   const running = await stateStore.update(first.executionId, { status: 'running' });
   const blocked = await executor.resume(plan, first.executionId);
   assert.equal(blocked.error.code, 'EXECUTION_ALREADY_RUNNING');
-  await stateStore.update(first.executionId, { status: 'failed' }, running.version + 1);
+  await stateStore.update(first.executionId, { status: 'failed' }, running.version);
   const mismatch = await executor.resume({ ...plan, goal: 'different' }, first.executionId);
   assert.equal(mismatch.error.code, 'EXECUTION_STATE_PLAN_MISMATCH');
 });

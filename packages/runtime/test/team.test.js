@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CapabilityRegistry, EventBus, AgentRuntime, MissionEngine, WorkflowEngine, ExecutionEngine, ExecutionPlanExecutor, RuntimePlanningBridge, DelegationEngine, HandoffProtocol, TeamRuntime, TeamBuilder, CapabilityPlanner, VerificationEngine } from '../src/index.js';
+import { CapabilityRegistry, EventBus, AgentRuntime, MissionEngine, WorkflowEngine, ExecutionEngine, ExecutionPlanExecutor, RuntimePlanningBridge, DelegationEngine, HandoffProtocol, TeamRuntime, TeamBuilder, CapabilityPlanner, VerificationEngine, ReflectionEngine, createBasicOutputCritic } from '../src/index.js';
 
 const base = (id, kind, extra = {}) => ({ schemaVersion:'0.1.0', id, kind, name:id, version:'0.1.0', status:'stable', description:id, provenance:{sourceType:'native'}, ...extra });
 
-function setup({ planned = false } = {}) {
+function setup({ planned = false, reflection = null } = {}) {
   const registry = new CapabilityRegistry();
   const events = new EventBus();
   const execution = new ExecutionEngine({ registry, events, verifier: new VerificationEngine() });
@@ -23,13 +23,20 @@ function setup({ planned = false } = {}) {
   const agents = new AgentRuntime({ registry, planner, missionEngine: mission, events });
   const handoff = new HandoffProtocol();
   const delegation = new DelegationEngine({ agentRuntime: agents, handoffProtocol: handoff, events });
-  const team = new TeamRuntime({ registry, agentRuntime: agents, delegationEngine: delegation, events });
+  const team = new TeamRuntime({ registry, agentRuntime: agents, delegationEngine: delegation, reflection, events });
   return { registry, events, execution, mission, agents, planner, delegation, team, planning, planExecutor };
+}
+
+function registerAgentPipeline(registry, agentId, toolId) {
+  registry.register({...base(toolId,'tool')}, async (input) => ({ agent:agentId, value:(input.value ?? 0) + 1 }));
+  registry.register({...base(`workflow/${agentId.split('/').pop()}`,'workflow'), steps:[{capability:toolId}]});
+  registry.register({...base(`mission/${agentId.split('/').pop()}`,'mission'), workflow:`workflow/${agentId.split('/').pop()}`});
+  registry.register({...base(agentId,'agent'), role:agentId.split('/').pop(), execution:{mission:`mission/${agentId.split('/').pop()}`}}, async () => null);
 }
 
 test('team runtime delegates members and preserves shared state', async () => {
   const { registry, team, events } = setup();
-  registry.register({...base('mission/a','mission'), workflow:'workflow/a'}, async () => null);
+  registry.register({...base('mission/a','mission'), workflow:'workflow/a'});
   registry.register({...base('workflow/a','workflow'), steps:[{capability:'tool/a'}]});
   registry.register({...base('tool/a','tool')}, async (input) => ({ count: (input.count ?? 0) + 1 }));
   registry.register({...base('agent/a','agent'), role:'researcher', execution:{mission:'mission/a'}}, async () => null);
@@ -42,9 +49,9 @@ test('team runtime delegates members and preserves shared state', async () => {
 });
 
 test('mission routes explicitly to a team and preserves mission lifecycle', async () => {
-  const { registry, mission, team } = setup();
-  registry.register({...base('workflow/a','workflow'), steps:[]});
+  const { registry, mission } = setup();
   registry.register({...base('agent/a','agent'), execution:{mission:'mission/a'}}, async () => null);
+  registry.register({...base('workflow/a','workflow'), steps:[]});
   registry.register({...base('mission/a','mission'), workflow:'workflow/a'});
   registry.register({...base('team/a','team'), task:'inspect', members:['agent/a']});
   const result = await mission.execute({...base('mission/team','mission'), team:'team/a'}, {value:1});
@@ -53,8 +60,8 @@ test('mission routes explicitly to a team and preserves mission lifecycle', asyn
   assert.equal(result.results.length, 1);
 });
 
-test('team members execute planned workflows when their missions use planning-enabled workflow engines', async () => {
-  const { registry, team, events } = setup({ planned: true });
+test('team members execute planned workflows and propagate request context', async () => {
+  const { registry, team, events } = setup({ planned:true });
   registry.register({...base('tool/a','tool')}, async (input, context) => ({ value:(input.value ?? 0) + 1, requestId:context.requestId }));
   registry.register({...base('workflow/a','workflow'), steps:[{capability:'tool/a'}]});
   registry.register({...base('mission/a','mission'), workflow:'workflow/a'});
@@ -64,6 +71,37 @@ test('team members execute planned workflows when their missions use planning-en
   assert.equal(result.results[0].result.output.value, 2);
   assert.equal(result.results[0].result.output.requestId, 'team-plan');
   assert.equal(events.history({type:'plan.completed'}).length, 1);
+});
+
+test('team synthesizes multiple successful agent outputs', async () => {
+  const { registry, team } = setup({ planned:true });
+  registerAgentPipeline(registry, 'agent/research', 'tool/research');
+  registerAgentPipeline(registry, 'agent/security', 'tool/security');
+  const result = await team.execute({...base('team/review','team'), task:'review repository', execution:{strategy:'parallel',maxConcurrency:2}, members:['agent/research','agent/security']}, {value:1});
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.synthesis.type, 'team-synthesis');
+  assert.equal(result.synthesis.memberCount, 2);
+  assert.deepEqual(result.synthesis.successfulMembers, ['agent/research','agent/security']);
+  assert.equal(result.synthesis.contextVersion, 2);
+});
+
+test('team reflection rejects an otherwise successful result', async () => {
+  const reflection = new ReflectionEngine({ critics:[{ id:'critic/reject-team', async evaluate(){ return { status:'rejected', reason:'insufficient cross-agent evidence' }; } }] });
+  const { registry, team } = setup({ planned:true, reflection });
+  registerAgentPipeline(registry, 'agent/research', 'tool/research');
+  const result = await team.execute({...base('team/review','team'), task:'review repository', members:['agent/research']}, {value:1});
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'TEAM_REFLECTION_REJECTED');
+  assert.equal(result.reflection.status, 'rejected');
+});
+
+test('team reflection accepts valid output through the standard critic', async () => {
+  const reflection = new ReflectionEngine({ critics:[createBasicOutputCritic()] });
+  const { registry, team } = setup({ planned:true, reflection });
+  registerAgentPipeline(registry, 'agent/research', 'tool/research');
+  const result = await team.execute({...base('team/review','team'), task:'review repository', members:['agent/research']}, {value:1});
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.reflection.status, 'accepted');
 });
 
 test('delegation limit produces a structured failure', async () => {

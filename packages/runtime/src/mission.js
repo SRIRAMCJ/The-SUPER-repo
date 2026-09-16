@@ -14,9 +14,14 @@ export class MissionEngine {
     this.events?.emit({ type: 'mission.started', missionId: mission.id, status: 'started', data: { input } });
 
     try {
-      const result = mission.team && this.teamRuntime
-        ? await this.teamRuntime.execute(this.workflowEngine.registry.require(mission.team).manifest, input, context)
-        : await this.executeWorkflow(mission, input, context);
+      let result;
+      if (mission.team) {
+        if (!this.teamRuntime) throw Object.assign(new Error(`Mission requires team runtime: ${mission.team}`), { code: 'TEAM_RUNTIME_UNAVAILABLE' });
+        const team = this.workflowEngine.registry.require(mission.team).manifest;
+        result = await this.teamRuntime.execute(team, input, context);
+      } else {
+        result = await this.executeWorkflow(mission, input, context);
+      }
       const missionResult = { missionId: mission.id, startedAt, finishedAt: this.clock().toISOString(), ...result };
       const type = result.status === 'succeeded' ? 'mission.completed' : 'mission.failed';
       this.events?.emit({ type, missionId: mission.id, status: result.status, data: missionResult, error: result.error });

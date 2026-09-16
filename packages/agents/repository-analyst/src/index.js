@@ -33,6 +33,7 @@ export function createRepositoryAnalystRuntime({ clock } = {}) {
   const delegation = new DelegationEngine({ agentRuntime: agent, handoffProtocol: handoff, events, clock });
   const reflection = new ReflectionEngine({ critics: [createBasicOutputCritic()] });
   const team = new TeamRuntime({ registry, agentRuntime: agent, delegationEngine: delegation, reflection, events, clock });
+  mission.teamRuntime = team;
 
   const workflowManifest = {
     schemaVersion: '0.1.0', id: 'workflow/repository-analysis', kind: 'workflow', name: 'Repository Analysis', version: '0.1.0', status: 'alpha',

@@ -21,6 +21,7 @@ function setup({ planned = false, reflection = null } = {}) {
   const agents = new AgentRuntime({ registry, planner, missionEngine: mission, events });
   const delegation = new DelegationEngine({ agentRuntime: agents, handoffProtocol: new HandoffProtocol(), events });
   const team = new TeamRuntime({ registry, agentRuntime: agents, delegationEngine: delegation, reflection, events });
+  mission.teamRuntime = team;
   return { registry, events, execution, mission, agents, planner, delegation, team };
 }
 
@@ -101,6 +102,7 @@ test('team reflection accepts valid output through the standard critic', async (
 
 test('mission fails explicitly when a team runtime is required but unavailable', async () => {
   const { registry, mission } = setup();
+  mission.teamRuntime = null;
   registry.register({...base('team/a','team'), members:[]});
   const result = await mission.execute({...base('mission/team','mission'), team:'team/a'}, {});
   assert.equal(result.status, 'failed');

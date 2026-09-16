@@ -29,8 +29,11 @@ export class TeamRuntime {
       const reflection = this.reflection ? await this.reflection.evaluate({ request: team.task ?? team.name, result: { status: failed ? 'failed' : 'succeeded', results: execution.results, sharedContext: execution.context }, context }) : null;
       const reflectionRejected = reflection?.status === 'rejected';
       const status = failed || reflectionRejected ? 'failed' : 'succeeded';
-      const output = { executionId, teamId: team.id, startedAt, finishedAt: this.clock().toISOString(), status, strategy: execution.strategy, results: execution.results, sharedContext: execution.context, synthesis, reflection };
-      this.events?.emit({ type: status === 'succeeded' ? 'team.completed' : 'team.failed', executionId, teamId: team.id, status, data: output, error: status === 'failed' ? { code: reflectionRejected ? 'TEAM_REFLECTION_REJECTED' : 'TEAM_MEMBER_FAILED', message: reflectionRejected ? 'Team output was rejected by reflection' : 'One or more team members did not succeed', retryable: false } : undefined });
+      const error = status === 'failed'
+        ? { code: reflectionRejected ? 'TEAM_REFLECTION_REJECTED' : 'TEAM_MEMBER_FAILED', message: reflectionRejected ? 'Team output was rejected by reflection' : 'One or more team members did not succeed', retryable: false }
+        : undefined;
+      const output = { executionId, teamId: team.id, startedAt, finishedAt: this.clock().toISOString(), status, strategy: execution.strategy, results: execution.results, sharedContext: execution.context, synthesis, reflection, ...(error ? { error } : {}) };
+      this.events?.emit({ type: status === 'succeeded' ? 'team.completed' : 'team.failed', executionId, teamId: team.id, status, data: output, error });
       return output;
     } catch (error) {
       return this.#fail(executionId, team.id, startedAt, error?.code ?? 'TEAM_ERROR', error?.message ?? String(error));

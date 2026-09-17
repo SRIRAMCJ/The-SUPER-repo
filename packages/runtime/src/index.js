@@ -15,6 +15,7 @@ export { EvaluationEngine } from './evaluation.js';
 export { BenchmarkEngine } from './benchmark.js';
 export { BenchmarkRegressionEngine } from './benchmark-regression.js';
 export { BenchmarkGovernanceEngine } from './benchmark-governance.js';
+export { EvolutionEngine } from './evolution.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

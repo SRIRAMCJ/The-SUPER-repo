@@ -54,16 +54,16 @@ export class ExecutionAudit {
 const START_EVENTS = new Set([
   'execution.started', 'plan.started', 'plan.resumed',
   'task-graph.started', 'task-graph.resumed', 'mission.started',
-  'adaptation.started'
+  'adaptation.started', 'evolution.control.started'
 ]);
 const SUCCESS_EVENTS = new Set([
   'execution.completed', 'plan.completed', 'task-graph.completed',
-  'mission.completed', 'adaptation.completed'
+  'mission.completed', 'adaptation.completed', 'evolution.control.completed'
 ]);
 const CANCELLED_EVENTS = new Set(['execution.cancelled', 'task-graph.cancelled', 'mission.cancelled']);
 const FAILURE_EVENTS = new Set([
   'execution.failed', 'plan.failed', 'task-graph.failed', 'mission.failed',
-  'adaptation.failed'
+  'adaptation.failed', 'evolution.control.failed', 'evolution.control.rolled_back'
 ]);
 
 function isStartEvent(type) { return START_EVENTS.has(type); }
@@ -76,6 +76,7 @@ function inferKind(type) {
   if (type?.startsWith('mission.')) return 'mission';
   if (type?.startsWith('plan.')) return 'plan';
   if (type?.startsWith('adaptation.')) return 'adaptation';
+  if (type?.startsWith('evolution.control.')) return 'evolution-control';
   return 'execution';
 }
 

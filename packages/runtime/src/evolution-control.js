@@ -31,11 +31,10 @@ export class EvolutionControlPlane {
     return states.map(clone);
   }
 
-  async run(proposal, { stages = DEFAULT_STAGES, healthCheck, context = {}, rollbackOnFailure = true, expectedVersion = null } = {}) {
+  async run(proposal, { stages = DEFAULT_STAGES, healthCheck, context = {}, rollbackOnFailure = true } = {}) {
     validateProposal(proposal);
     validateStages(stages);
     validateContext(context);
-    validateExpectedVersion(expectedVersion);
     if (typeof healthCheck !== 'function') throw new TypeError('EvolutionControlPlane requires a healthCheck function');
 
     const decision = this.policyEngine.authorize(
@@ -46,7 +45,7 @@ export class EvolutionControlPlane {
 
     const controlId = createExecutionId();
     const now = this.clock().toISOString();
-    const state = await this.store.create({
+    let state = await this.store.create({
       executionId: stateId(controlId),
       type: 'evolution-control',
       schemaVersion: '0.1.0',
@@ -60,74 +59,75 @@ export class EvolutionControlPlane {
       createdAt: now,
       updatedAt: now
     });
-    if (expectedVersion !== null && expectedVersion !== state.version) return this.#fail(state, { code: 'EXECUTION_STATE_CONFLICT', message: `Execution state version conflict: expected ${expectedVersion}, actual ${state.version}` });
     await this.#emit('evolution.control.started', { executionId: controlId, controlId, proposalId: proposal.proposalId, stages: clone(stages) });
 
-    let current = state;
     try {
       for (let index = 0; index < stages.length; index += 1) {
         const stage = stages[index];
-        current = await this.#update(current, { stageIndex: index, history: [...current.history, { action: 'stage_started', stageId: stage.id, stageIndex: index, at: this.clock().toISOString() }] });
+        state = await this.#update(state, { stageIndex: index, history: [...state.history, { action: 'stage_started', stageId: stage.id, stageIndex: index, at: this.clock().toISOString() }] });
         await this.#emit('evolution.control.stage.started', { executionId: controlId, controlId, proposalId: proposal.proposalId, stageId: stage.id, stageIndex: index, fraction: stage.fraction });
 
         const adaptation = await this.adaptationEngine.apply(proposal, { ...context, evolutionControlId: controlId, rolloutStage: clone(stage) });
-        if (adaptation.status !== 'applied') return this.#abort(current, stage, adaptation, rollbackOnFailure);
+        if (adaptation.status !== 'applied') return this.#abort(state, stage, adaptation, rollbackOnFailure);
 
-        const adaptations = [...current.adaptations, { stageId: stage.id, adaptationId: adaptation.adaptationId, revision: adaptation.revision }];
-        current = await this.#update(current, { adaptations, history: [...current.history, { action: 'stage_applied', stageId: stage.id, stageIndex: index, adaptationId: adaptation.adaptationId, at: this.clock().toISOString() }] });
+        const adaptations = [...state.adaptations, { stageId: stage.id, adaptationId: adaptation.adaptationId, revision: adaptation.revision }];
+        state = await this.#update(state, { adaptations, history: [...state.history, { action: 'stage_applied', stageId: stage.id, stageIndex: index, adaptationId: adaptation.adaptationId, at: this.clock().toISOString() }] });
 
         let health;
         try {
           health = await healthCheck({ proposal: clone(proposal), stage: clone(stage), controlId, adaptation: clone(adaptation), context: clone(context) });
         } catch (error) {
-          return this.#abort(current, stage, { status: 'failed', error: normalizeError(error) }, rollbackOnFailure, 'health_check_failed');
+          return this.#abort(state, stage, { status: 'failed', error: normalizeError(error) }, rollbackOnFailure, 'health_check_failed');
         }
         validateHealth(health);
-        if (!health.healthy) return this.#abort(current, stage, { status: 'failed', error: { code: health.code ?? 'ROLLOUT_UNHEALTHY', message: health.reason ?? 'Health check failed' }, health }, rollbackOnFailure, 'health_check_failed');
+        if (!health.healthy) return this.#abort(state, stage, { status: 'failed', error: { code: health.code ?? 'ROLLOUT_UNHEALTHY', message: health.reason ?? 'Health check failed' }, health }, rollbackOnFailure, 'health_check_failed');
 
-        current = await this.#update(current, { history: [...current.history, { action: 'stage_healthy', stageId: stage.id, stageIndex: index, health: clone(health), at: this.clock().toISOString() }] });
+        state = await this.#update(state, { history: [...state.history, { action: 'stage_healthy', stageId: stage.id, stageIndex: index, health: clone(health), at: this.clock().toISOString() }] });
         await this.#emit('evolution.control.stage.healthy', { executionId: controlId, controlId, proposalId: proposal.proposalId, stageId: stage.id, stageIndex: index, health: clone(health) });
       }
     } catch (error) {
-      return this.#abort(current, stages[current.stageIndex] ?? null, { status: 'failed', error: normalizeError(error) }, rollbackOnFailure, 'control_execution_failed');
+      return this.#abort(state, stages[state.stageIndex] ?? null, { status: 'failed', error: normalizeError(error) }, rollbackOnFailure, 'control_execution_failed');
     }
 
     const finishedAt = this.clock().toISOString();
-    const updated = await this.#update(current, { status: 'completed', history: [...current.history, { action: 'completed', status: 'completed', at: finishedAt }], updatedAt: finishedAt });
+    const updated = await this.#update(state, { status: 'completed', history: [...state.history, { action: 'completed', status: 'completed', at: finishedAt }], updatedAt: finishedAt });
     const result = Object.freeze({ schemaVersion: '0.1.0', type: 'evolution-control-result', status: 'completed', controlId, proposalId: proposal.proposalId, stageCount: stages.length, adaptations: clone(updated.adaptations), storeVersion: updated.version });
     await this.#emit('evolution.control.completed', { executionId: controlId, ...result });
     return result;
   }
 
   async #abort(current, stage, failureResult, rollbackOnFailure, reason = 'stage_failed') {
-    let rollbackErrors = [];
+    const rollbackErrors = [];
     if (rollbackOnFailure) {
       for (const applied of [...current.adaptations].reverse()) {
-        const result = await this.adaptationEngine.rollback(applied.adaptationId);
-        if (result.status !== 'rolled_back') rollbackErrors.push({ adaptationId: applied.adaptationId, error: result.error ?? { code: 'ROLLBACK_FAILED', message: 'Adaptation rollback failed' } });
+        try {
+          const result = await this.adaptationEngine.rollback(applied.adaptationId);
+          if (result.status !== 'rolled_back') rollbackErrors.push({ adaptationId: applied.adaptationId, error: result.error ?? { code: 'ROLLBACK_FAILED', message: 'Adaptation rollback failed' } });
+        } catch (error) {
+          rollbackErrors.push({ adaptationId: applied.adaptationId, error: normalizeError(error) });
+        }
       }
     }
     const status = rollbackErrors.length === 0 && rollbackOnFailure ? 'rolled_back' : 'failed';
     const now = this.clock().toISOString();
-    const updated = await this.#update(current, {
-      status,
-      error: failureResult.error,
-      rollbackErrors: clone(rollbackErrors),
-      history: [...current.history, { action: reason, status, stageId: stage?.id ?? null, failure: clone(failureResult), rollbackErrors: clone(rollbackErrors), at: now }],
-      updatedAt: now
-    });
+    let updated;
+    try {
+      updated = await this.#update(current, {
+        status,
+        error: failureResult.error,
+        rollbackErrors: clone(rollbackErrors),
+        history: [...current.history, { action: reason, status, stageId: stage?.id ?? null, failure: clone(failureResult), rollbackErrors: clone(rollbackErrors), at: now }],
+        updatedAt: now
+      });
+    } catch (error) {
+      return Object.freeze({ schemaVersion: '0.1.0', type: 'evolution-control-result', status: 'failed', controlId: current.controlId, proposalId: current.proposalId, stageId: stage?.id ?? null, error: normalizeError(error), rollbackErrors: clone(rollbackErrors) });
+    }
     const result = Object.freeze({ schemaVersion: '0.1.0', type: 'evolution-control-result', status, controlId: current.controlId, proposalId: current.proposalId, stageId: stage?.id ?? null, storeVersion: updated.version, error: failureResult.error, rollbackErrors: clone(rollbackErrors) });
     await this.#emit(status === 'rolled_back' ? 'evolution.control.rolled_back' : 'evolution.control.failed', { executionId: current.controlId, ...result });
     return result;
   }
 
-  async #fail(current, error) {
-    const now = this.clock().toISOString();
-    const updated = await this.#update(current, { status: 'failed', error, history: [...current.history, { action: 'state_conflict', status: 'failed', error, at: now }], updatedAt: now });
-    return Object.freeze({ schemaVersion: '0.1.0', type: 'evolution-control-result', status: 'failed', controlId: current.controlId, proposalId: current.proposalId, storeVersion: updated.version, error });
-  }
-
-  async #update(current, patch) { return this.store.update(current.executionId, patch); }
+  async #update(current, patch) { return this.store.update(current.executionId, patch, current.version); }
   async #emit(type, payload) { if (this.eventBus && typeof this.eventBus.emit === 'function') this.eventBus.emit({ ...payload, type }); }
 }
 
@@ -149,7 +149,6 @@ function validateStages(stages) {
 }
 function validateHealth(health) { if (!health || typeof health !== 'object' || typeof health.healthy !== 'boolean') throw new TypeError('Health check must return { healthy: boolean }'); }
 function validateContext(context) { if (!context || typeof context !== 'object' || Array.isArray(context)) throw new TypeError('Evolution control context must be an object'); }
-function validateExpectedVersion(value) { if (value !== null && (!Number.isInteger(value) || value < 0)) throw new TypeError('expectedVersion must be a non-negative integer or null'); }
 function validateId(value, name) { if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${name} must be a non-empty string`); }
 function stateId(controlId) { return `evolution-control:${controlId}`; }
 function clone(value) { return structuredClone(value); }

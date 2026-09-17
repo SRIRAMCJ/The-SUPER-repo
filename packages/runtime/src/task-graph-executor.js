@@ -19,7 +19,7 @@ export class TaskGraphExecutor {
   async execute(plan, input = {}, context = {}, options = {}) {
     validatePlan(plan);
     const config = normalizeOptions(options, plan.taskCount);
-    const executionId = context.taskGraphExecutionId ?? createExecutionId();
+    const executionId = context.taskGraphExecutionId ?? context.executionId ?? createExecutionId();
     return this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false);
   }
 
@@ -63,7 +63,7 @@ export class TaskGraphExecutor {
       const taskContext = { ...context, executionId, taskId: task.id, signal: controller.signal, taskResults: Object.fromEntries(results) };
       this.events?.emit({ type: 'task.started', executionId, taskId: task.id, status: 'started', data: { dependsOn: task.dependsOn, attempt } });
       try {
-        const taskPromise = this.executeTask(task, taskInput, taskContext);
+        const taskPromise = (config.executeTask ?? this.executeTask)(task, taskInput, taskContext);
         const normalized = normalizeResult(await Promise.race([taskPromise, cancelPromise]));
         results.set(task.id, normalized);
         const cancelled = normalized.error?.code === 'EXECUTION_CANCELLED';
@@ -145,7 +145,8 @@ function normalizeOptions(options, taskCount) {
   if (strategy !== 'sequential' && strategy !== 'parallel') throw taskGraphFailure('TASK_STRATEGY_INVALID', `Unsupported task graph strategy: ${strategy}`);
   const value = options.maxConcurrency ?? 1;
   if (!Number.isInteger(value) || value < 1) throw taskGraphFailure('TASK_CONCURRENCY_INVALID', 'maxConcurrency must be a positive integer');
-  return { strategy, maxConcurrency: Math.min(value, taskCount), failFast: options.failFast !== false };
+  if (options.executeTask !== undefined && typeof options.executeTask !== 'function') throw taskGraphFailure('TASK_EXECUTOR_INVALID', 'executeTask must be a function');
+  return { strategy, maxConcurrency: Math.min(value, taskCount), failFast: options.failFast !== false, executeTask: options.executeTask ?? null };
 }
 
 function normalizeResult(result) {

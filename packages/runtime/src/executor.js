@@ -19,7 +19,7 @@ export class ExecutionEngine {
   async execute(capabilityId, input = {}, context = {}) {
     const entry = this.registry.require(capabilityId);
     const { manifest, handler } = entry;
-    const executionId = createExecutionId();
+    const executionId = context.executionId ?? createExecutionId();
     const startedAt = this.clock().toISOString();
 
     if (this.policy) {
@@ -35,7 +35,10 @@ export class ExecutionEngine {
     this.#emit({ type:'execution.started', executionId, capabilityId, status:'started', data:{ input, context } });
     const controller = new AbortController();
     const cancellation = this.cancellation.register(executionId, controller);
+    let removeExternalAbort = null;
     try {
+      const externalCancellation = externalSignalPromise(context.signal, controller, cancellationReason(context.signal));
+      removeExternalAbort = externalCancellation.cleanup;
       const timeoutMs = Number.isFinite(manifest.timeoutSeconds) ? manifest.timeoutSeconds * 1000 : null;
       const handlerPromise = Promise.resolve().then(() => handler(input, {
         executionId,
@@ -45,8 +48,8 @@ export class ExecutionEngine {
         emit: (data) => this.#emit({ type:'execution.progress', executionId, capabilityId, status:'progress', data })
       }));
       const output = timeoutMs
-        ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id, cancellation)
-        : await Promise.race([handlerPromise, cancellation]);
+        ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id, cancellation, externalCancellation.promise)
+        : await Promise.race([handlerPromise, cancellation, externalCancellation.promise]);
       const verification = this.verifier
         ? await this.verifier.verify({ capability: manifest, input, output, context })
         : { verified: true, checks: 0, failures: [] };
@@ -63,6 +66,7 @@ export class ExecutionEngine {
       this.#emit({ type:'execution.failed', executionId, capabilityId, status:'failed', error:normalized });
       return { executionId, capabilityId, status:'failed', startedAt, finishedAt:this.clock().toISOString(), error:normalized };
     } finally {
+      removeExternalAbort?.();
       this.cancellation.unregister(executionId);
     }
   }
@@ -70,7 +74,26 @@ export class ExecutionEngine {
   #emit(event) { return this.events?.emit(event); }
 }
 
-async function withTimeout(promise, timeoutMs, controller, capabilityId, cancellation) {
+function externalSignalPromise(signal, controller, reason) {
+  if (!signal || typeof signal.addEventListener !== 'function') return { promise: new Promise(() => {}), cleanup: () => {} };
+  let rejectSignal;
+  const promise = new Promise((_, reject) => { rejectSignal = reject; });
+  const abort = () => {
+    const error = reason ?? Object.assign(new Error('Execution cancelled by parent'), { code:'EXECUTION_CANCELLED', retryable:false });
+    controller.abort(error);
+    rejectSignal(error);
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener('abort', abort, { once: true });
+  return { promise, cleanup: () => signal.removeEventListener('abort', abort) };
+}
+
+function cancellationReason(signal) {
+  if (!signal?.reason) return null;
+  return signal.reason?.code ? signal.reason : Object.assign(new Error(String(signal.reason)), { code:'EXECUTION_CANCELLED', retryable:false });
+}
+
+async function withTimeout(promise, timeoutMs, controller, capabilityId, cancellation, externalCancellation) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
@@ -78,7 +101,7 @@ async function withTimeout(promise, timeoutMs, controller, capabilityId, cancell
       reject(Object.assign(new Error(`Execution timed out after ${timeoutMs}ms: ${capabilityId}`), { code:'EXECUTION_TIMEOUT', retryable:true }));
     }, timeoutMs);
   });
-  try { return await Promise.race([promise, timeout, cancellation]); }
+  try { return await Promise.race([promise, timeout, cancellation, externalCancellation]); }
   finally { clearTimeout(timer); }
 }
 

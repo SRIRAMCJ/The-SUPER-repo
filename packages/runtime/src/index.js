@@ -34,6 +34,7 @@ export { AgentExecutionOrchestrator, AGENT_EXECUTION_ORCHESTRATION_SCHEMA_VERSIO
 export { MultiAgentCoordinationKernel, MULTI_AGENT_COORDINATION_SCHEMA_VERSION } from './multi-agent-coordination.js';
 export { ModelExecutionKernel, MODEL_EXECUTION_SCHEMA_VERSION } from './model-execution-kernel.js';
 export { MemoryCapability, MEMORY_CAPABILITY_SCHEMA_VERSION } from './memory-capability.js';
+export { ToolRuntime, TOOL_RUNTIME_SCHEMA_VERSION, TOOL_TERMINAL_STATES } from './tool-runtime.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

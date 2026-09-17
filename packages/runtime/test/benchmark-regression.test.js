@@ -20,7 +20,7 @@ test('compares benchmark runs deterministically and reports suite changes', () =
     ])
   );
   assert.equal(result.status, 'passed');
-  assert.equal(result.deltas.passRate, -0.1);
+  assert.ok(Math.abs(result.deltas.passRate + 0.1) < Number.EPSILON);
   assert.equal(result.deltas.failed, 1);
   assert.deepEqual(result.suites.map((suite) => suite.suiteId), ['a', 'b', 'c']);
   assert.equal(result.suites.find((suite) => suite.suiteId === 'b').status, 'changed');

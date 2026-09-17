@@ -27,6 +27,7 @@ export { RuntimeReadinessKernel, RUNTIME_READINESS_SCHEMA_VERSION, RUNTIME_READI
 export { RuntimeConfigurationKernel, RUNTIME_CONFIGURATION_SCHEMA_VERSION } from './configuration.js';
 export { RuntimeShutdownAdmission, RUNTIME_SHUTDOWN_ADMISSION_SCHEMA_VERSION, RUNTIME_SHUTDOWN_ADMISSION_STATES } from './shutdown-admission.js';
 export { RuntimeExecutionAdmission, RUNTIME_EXECUTION_ADMISSION_SCHEMA_VERSION } from './execution-admission.js';
+export { RuntimeRecoveryKernel, RUNTIME_RECOVERY_SCHEMA_VERSION, RUNTIME_RECOVERY_STATES } from './recovery-kernel.js';
 export { RuntimeCommandBus } from './command-bus.js';
 export { RuntimeLifecycleManager, RUNTIME_LIFECYCLE_STATES } from './lifecycle.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';

@@ -28,6 +28,7 @@ export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';
+export { AgentPlanningKernel, AGENT_PLANNING_SCHEMA_VERSION, AGENT_PLANNING_DECISIONS } from './agent-planning.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

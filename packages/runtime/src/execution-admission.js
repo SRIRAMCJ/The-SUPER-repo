@@ -66,6 +66,21 @@ export class RuntimeExecutionAdmission {
     }
   }
 
+  forceStop({ reason = 'forced' } = {}) {
+    const executions = typeof this.shutdown.activeExecutions === 'function' ? this.shutdown.activeExecutions() : [];
+    const released = [];
+    for (const executionId of executions) {
+      const allocation = this.resources?.allocation?.(executionId)?.allocation ?? {};
+      if (this.resources && Object.values(allocation).some((value) => value > 0)) {
+        this.resources.release(executionId, allocation);
+        released.push({ executionId, resources: allocation });
+      }
+    }
+    const shutdown = this.shutdown.forceStop({ reason });
+    this.#record({ action: 'force_stop', status: 'stopped', reason: sanitizeReason(reason), executions, released });
+    return freeze({ schemaVersion: SCHEMA_VERSION, type: 'runtime-execution-force-stop', state: shutdown.state, executions, released, shutdown });
+  }
+
   history() { return Object.freeze(this.#history.map(clone)); }
 
   snapshot() {

@@ -45,15 +45,17 @@ test('startup failure enters failed state and retains a diagnostic history entry
   assert.ok(history.some((entry) => entry.state === 'failed' && entry.error === 'database unavailable'));
 });
 
-test('dependency cycles and missing dependencies fail deterministically', () => {
-  assert.throws(() => new RuntimeLifecycleManager({ components: [
+test('dependency cycles and missing dependencies fail deterministically', async () => {
+  const cycle = new RuntimeLifecycleManager({ components: [
     { name: 'a', dependsOn: ['b'], start: () => {} },
     { name: 'b', dependsOn: ['a'], start: () => {} }
-  ] }).start(), /dependency cycle/);
+  ] });
+  await assert.rejects(() => cycle.start(), /dependency cycle/);
 
-  assert.throws(() => new RuntimeLifecycleManager({ components: [
+  const missing = new RuntimeLifecycleManager({ components: [
     { name: 'a', dependsOn: ['missing'], start: () => {} }
-  ] }).start(), /Unknown lifecycle dependency/);
+  ] });
+  await assert.rejects(() => missing.start(), /Unknown lifecycle dependency/);
 });
 
 test('lifecycle state and history are isolated from caller mutation', async () => {

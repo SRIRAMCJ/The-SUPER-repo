@@ -13,6 +13,7 @@ export { ExecutionStateStore, FileExecutionStateStore, isTerminalExecutionStatus
 export { ExecutionRecovery } from './recovery.js';
 export { EvaluationEngine } from './evaluation.js';
 export { BenchmarkEngine } from './benchmark.js';
+export { BenchmarkRegressionEngine } from './benchmark-regression.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

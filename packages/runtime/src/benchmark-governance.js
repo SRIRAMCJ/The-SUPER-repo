@@ -23,18 +23,7 @@ export class BenchmarkGovernanceEngine {
     const id = stateId(baselineRun.benchmarkSuiteId);
     if (await this.store.get(id)) throw conflict(`Benchmark baseline already exists: ${baselineRun.benchmarkSuiteId}`, 'BENCHMARK_BASELINE_EXISTS');
     const now = this.clock().toISOString();
-    const state = await this.store.create({
-      executionId: id,
-      type: 'benchmark-baseline',
-      schemaVersion: '0.1.0',
-      benchmarkSuiteId: baselineRun.benchmarkSuiteId,
-      baselineVersion: 1,
-      current: clone(baselineRun),
-      history: [{ version: 1, action: 'initialized', benchmarkRun: clone(baselineRun), at: now }],
-      metadata: sanitizeMetadata(metadata),
-      createdAt: now,
-      updatedAt: now
-    });
+    const state = await this.store.create({ executionId: id, type: 'benchmark-baseline', schemaVersion: '0.1.0', benchmarkSuiteId: baselineRun.benchmarkSuiteId, baselineVersion: 1, current: clone(baselineRun), history: [{ version: 1, action: 'initialized', benchmarkRun: clone(baselineRun), at: now }], metadata: sanitizeMetadata(metadata), createdAt: now, updatedAt: now });
     await this.#emit('benchmark.baseline.initialized', state);
     return clone(state);
   }
@@ -58,7 +47,6 @@ export class BenchmarkGovernanceEngine {
       await this.#emit('benchmark.baseline.promotion_rejected', { benchmarkSuiteId: candidateRun.benchmarkSuiteId, baselineVersion: current.baselineVersion, regression });
       return Object.freeze({ schemaVersion: '0.1.0', type: 'benchmark-promotion', status: 'rejected', benchmarkSuiteId: candidateRun.benchmarkSuiteId, baselineVersion: current.baselineVersion, regression, violations: regression.violations ?? [] });
     }
-
     const now = this.clock().toISOString();
     const nextBaselineVersion = current.baselineVersion + 1;
     const nextHistory = [...current.history, { version: nextBaselineVersion, action: 'promoted', benchmarkRun: clone(candidateRun), regression: clone(regression), metadata: sanitizeMetadata(metadata), at: now }];
@@ -86,7 +74,7 @@ export class BenchmarkGovernanceEngine {
   }
 
   async #emit(type, payload) {
-    if (this.eventBus && typeof this.eventBus.emit === 'function') await this.eventBus.emit(type, payload);
+    if (this.eventBus && typeof this.eventBus.emit === 'function') this.eventBus.emit({ ...payload, type });
   }
 }
 
@@ -105,11 +93,7 @@ function validateRun(run, label) {
   if (Math.abs(run.passRate - expected) > Number.EPSILON * 8) throw new TypeError(`${label} benchmark run passRate must match passed/caseCount`);
   if (!Array.isArray(run.suites)) throw new TypeError(`${label} benchmark run requires suites`);
 }
-
-function sanitizeMetadata(metadata) {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new TypeError('Benchmark metadata must be an object');
-  return structuredClone(metadata);
-}
+function sanitizeMetadata(metadata) { if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new TypeError('Benchmark metadata must be an object'); return structuredClone(metadata); }
 function conflict(message, code) { return Object.assign(new Error(message), { code, retryable: false }); }
 function failure(code, message) { return Object.freeze({ schemaVersion: '0.1.0', type: 'benchmark-governance', status: 'failed', error: Object.freeze({ code, message }) }); }
 function clone(value) { return structuredClone(value); }

@@ -21,6 +21,7 @@ export { EvolutionControlPlane } from './evolution-control.js';
 export { ObservabilityEngine } from './observability.js';
 export { RuntimeControlPlane } from './control-plane.js';
 export { RuntimeOperations } from './operations.js';
+export { RuntimeCommandBus } from './command-bus.js';
 export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';

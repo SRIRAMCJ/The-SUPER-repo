@@ -48,6 +48,20 @@ test('does not admit an already-cancelled execution', async () => {
   assert.equal(shutdown.isAdmitted('e1'), false);
 });
 
+test('reconciles resource reservations before forced shutdown', () => {
+  const { admission, shutdown, resources } = setup();
+  admission.admit({ executionId: 'e1', resources: { concurrency: 1 } });
+  admission.admit({ executionId: 'e2', resources: {} });
+  const result = admission.forceStop({ reason: 'operator_abort' });
+  assert.equal(result.state, 'stopped');
+  assert.deepEqual(result.executions, ['e1', 'e2']);
+  assert.equal(resources.totals().totals.concurrency, 0);
+  assert.equal(resources.allocation('e1').allocation.concurrency, 0);
+  assert.equal(resources.allocation('e2').allocation.concurrency, 0);
+  assert.equal(shutdown.activeExecutions().length, 0);
+  assert.equal(result.released[0].executionId, 'e1');
+});
+
 test('keeps admission records immutable and bounded', () => {
   const { admission } = setup();
   for (const id of ['e1', 'e2', 'e3']) {

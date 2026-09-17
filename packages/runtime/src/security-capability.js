@@ -40,7 +40,7 @@ export class SecurityCapabilityGate {
         }
       }
     } catch (error) {
-      decision = Object.freeze({
+      decision = deepFreeze({
         schemaVersion: SCHEMA_VERSION,
         decisionId,
         timestamp,
@@ -61,12 +61,12 @@ export class SecurityCapabilityGate {
   }
 
   snapshot() {
-    return Object.freeze(structuredClone({
+    return deepFreeze({
       schemaVersion: SCHEMA_VERSION,
       type: 'security-capability-gate',
       maxDecisions: this.maxDecisions,
       recentDecisions: this.getDecisions(20),
-    }));
+    });
   }
 }
 
@@ -101,17 +101,23 @@ function normalizePermissions(value) {
 }
 
 function buildDecision(decisionId, timestamp, normalized, decision, reason, detail) {
-  return Object.freeze({
+  return deepFreeze({
     schemaVersion: SCHEMA_VERSION,
     decisionId,
     timestamp,
     capabilityId: normalized.id,
     decision,
     allowed: decision === DECISIONS.ALLOWED,
-    permissions: normalized.permissions,
+    permissions: [...normalized.permissions],
     reason,
     detail,
   });
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }
 
 function defaultDecisionId(capabilityId) {

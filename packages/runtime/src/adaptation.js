@@ -73,6 +73,11 @@ export class AdaptationEngine {
       updatedAt: now,
       history: [{ revision: 1, action: 'apply_started', status: 'applying', at: now }]
     });
+
+    if (expectedVersion !== null && expectedVersion !== state.version) {
+      return this.#failApply(state, { code: 'EXECUTION_STATE_CONFLICT', message: `Execution state version conflict: expected ${expectedVersion}, actual ${state.version}` });
+    }
+
     await this.#emit('adaptation.started', { executionId: adaptationId, adaptationId, proposalId: proposal.proposalId });
 
     let applied;
@@ -86,41 +91,47 @@ export class AdaptationEngine {
       return this.#failApply(state, { code: 'ADAPTER_CONTRACT_INVALID', message: 'Adapter apply must return an object with rollback function' });
     }
 
-    const verification = await this.verificationEngine.verify({
-      capability: proposal.metadata?.capability ?? { id: proposal.suiteId, risk: proposal.metadata?.risk ?? 'low' },
-      input: proposal.metadata?.input ?? null,
-      output: applied.output,
-      context: { ...context, adaptationId, evolutionProposal: proposal }
-    });
+    let verification;
+    try {
+      verification = await this.verificationEngine.verify({
+        capability: proposal.metadata?.capability ?? { id: proposal.suiteId, risk: proposal.metadata?.risk ?? 'low' },
+        input: proposal.metadata?.input ?? null,
+        output: applied.output,
+        context: { ...context, adaptationId, evolutionProposal: proposal }
+      });
+    } catch (error) {
+      return this.#rollbackAfterFailure(state, applied, 'Verification threw an error', null, normalizeError(error));
+    }
 
     if (!verification.verified) {
-      try {
-        await applied.rollback({ reason: 'Verification failed', verification, adaptationId });
-      } catch (error) {
-        return this.#failVerificationRollback(state, verification, normalizeError(error));
-      }
-      const updated = await this.store.update(state.executionId, {
-        status: 'rolled_back',
-        revision: state.revision + 1,
-        verification,
-        history: [...state.history, { revision: state.revision + 1, action: 'verification_failed_rollback', status: 'rolled_back', at: this.clock().toISOString(), verification }],
-        updatedAt: this.clock().toISOString()
-      });
-      const result = Object.freeze({ schemaVersion: '0.1.0', type: 'adaptation-result', status: 'rolled_back', adaptationId, proposalId: proposal.proposalId, revision: updated.revision, storeVersion: updated.version, verification });
-      await this.#emit('adaptation.rolled_back', { executionId: adaptationId, ...result, reason: 'Verification failed' });
-      return result;
+      return this.#rollbackAfterFailure(state, applied, 'Verification failed', verification, null);
     }
 
     const finishedAt = this.clock().toISOString();
     const nextRevision = state.revision + 1;
-    const updated = await this.store.update(state.executionId, {
-      status: 'applied',
-      revision: nextRevision,
-      output: clone(applied.output),
-      verification: clone(verification),
-      history: [...state.history, { revision: nextRevision, action: 'applied', status: 'applied', at: finishedAt }],
-      updatedAt: finishedAt
-    }, expectedVersion);
+    let updated;
+    try {
+      updated = await this.store.update(state.executionId, {
+        status: 'applied',
+        revision: nextRevision,
+        output: clone(applied.output),
+        verification: clone(verification),
+        history: [...state.history, { revision: nextRevision, action: 'applied', status: 'applied', at: finishedAt }],
+        updatedAt: finishedAt
+      }, expectedVersion);
+    } catch (error) {
+      const normalized = normalizeError(error);
+      try {
+        await applied.rollback({ reason: 'State commit failed', error: normalized, adaptationId });
+      } catch (rollbackError) {
+        return this.#failVerificationRollback(state, verification, {
+          code: 'ADAPTATION_COMMIT_AND_ROLLBACK_FAILED',
+          message: `${normalized.message}; rollback failed: ${normalizeError(rollbackError).message}`
+        });
+      }
+      return this.#failVerificationRollback(state, verification, normalized);
+    }
+
     const result = Object.freeze({ schemaVersion: '0.1.0', type: 'adaptation-result', status: 'applied', adaptationId, proposalId: proposal.proposalId, revision: updated.revision, storeVersion: updated.version, output: clone(applied.output), verification: clone(verification) });
     await this.#emit('adaptation.completed', { executionId: adaptationId, ...result });
     return result;
@@ -132,6 +143,9 @@ export class AdaptationEngine {
     const current = await this.store.get(stateId(adaptationId));
     if (!current) return failure('ADAPTATION_NOT_FOUND', `Runtime adaptation not found: ${adaptationId}`);
     if (current.status !== 'applied') return failure('ADAPTATION_NOT_APPLIED', `Runtime adaptation is not applied: ${current.status}`);
+    if (expectedVersion !== null && expectedVersion !== current.version) {
+      return failure('EXECUTION_STATE_CONFLICT', `Execution state version conflict: expected ${expectedVersion}, actual ${current.version}`);
+    }
 
     try {
       await this.adapter.rollback({ adaptation: clone(current), adaptationId });
@@ -141,14 +155,43 @@ export class AdaptationEngine {
 
     const now = this.clock().toISOString();
     const nextRevision = current.revision + 1;
-    const updated = await this.store.update(stateId(adaptationId), {
-      status: 'rolled_back',
-      revision: nextRevision,
-      history: [...current.history, { revision: nextRevision, action: 'rollback', status: 'rolled_back', fromRevision: current.revision, at: now }],
-      updatedAt: now
-    }, expectedVersion);
+    let updated;
+    try {
+      updated = await this.store.update(stateId(adaptationId), {
+        status: 'rolled_back',
+        revision: nextRevision,
+        history: [...current.history, { revision: nextRevision, action: 'rollback', status: 'rolled_back', fromRevision: current.revision, at: now }],
+        updatedAt: now
+      }, expectedVersion);
+    } catch (error) {
+      return failure(normalizeError(error).code, normalizeError(error).message);
+    }
     const result = Object.freeze({ schemaVersion: '0.1.0', type: 'adaptation-rollback', status: 'rolled_back', adaptationId, previousRevision: current.revision, revision: updated.revision, storeVersion: updated.version });
     await this.#emit('adaptation.rolled_back', { executionId: adaptationId, ...result });
+    return result;
+  }
+
+  async #rollbackAfterFailure(state, applied, reason, verification, error) {
+    try {
+      await applied.rollback({ reason, verification, error, adaptationId: state.adaptationId });
+    } catch (rollbackError) {
+      return this.#failVerificationRollback(state, verification, {
+        code: 'ADAPTATION_ROLLBACK_FAILED',
+        message: normalizeError(rollbackError).message
+      });
+    }
+    const now = this.clock().toISOString();
+    const revision = state.revision + 1;
+    const updated = await this.store.update(state.executionId, {
+      status: 'rolled_back',
+      revision,
+      verification,
+      error: error ?? undefined,
+      history: [...state.history, { revision, action: 'rollback_after_verification_failure', status: 'rolled_back', reason, at: now, verification, error: error ?? undefined }],
+      updatedAt: now
+    });
+    const result = Object.freeze({ schemaVersion: '0.1.0', type: 'adaptation-result', status: 'rolled_back', adaptationId: state.adaptationId, proposalId: state.proposalId, revision: updated.revision, storeVersion: updated.version, verification, error: error ?? undefined });
+    await this.#emit('adaptation.rolled_back', { executionId: state.adaptationId, ...result, reason });
     return result;
   }
 

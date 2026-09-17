@@ -24,7 +24,7 @@ export class RuntimeControlPlane {
     const failed = metric(metrics, 'executions.failed');
     const denied = metric(metrics, 'executions.denied');
     const failureRate = started ? (failed + denied) / started : 0;
-    const status = recentFailures >= 5 || failureRate >= 0.25 ? 'critical' : recentFailures > 0 && metrics.activeExecutions > 0 ? 'degraded' : 'healthy';
+    const status = recentFailures >= 5 || failureRate > 0.5 ? 'critical' : recentFailures > 0 ? 'degraded' : 'healthy';
     return freeze({ schemaVersion: '0.1.0', type: 'runtime-health', generatedAt: this.clock().toISOString(), status, activeExecutions: metrics.activeExecutions, recentFailures, failureWindowMs: this.failureWindowMs, executionFailureRate: Number(failureRate.toFixed(6)), counters: { started, completed: metric(metrics, 'executions.completed'), failed, denied } });
   }
 

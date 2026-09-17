@@ -29,6 +29,9 @@ export class ExecutionAudit {
     } else if (isSuccessEvent(event.type)) {
       record.finishedAt = timestamp;
       record.status = 'succeeded';
+    } else if (isRollbackEvent(event.type)) {
+      record.finishedAt = timestamp;
+      record.status = 'rolled_back';
     } else if (isCancelledEvent(event.type)) {
       record.finishedAt = timestamp;
       record.status = 'cancelled';
@@ -60,14 +63,16 @@ const SUCCESS_EVENTS = new Set([
   'execution.completed', 'plan.completed', 'task-graph.completed',
   'mission.completed', 'adaptation.completed', 'evolution.control.completed'
 ]);
+const ROLLBACK_EVENTS = new Set(['adaptation.rolled_back', 'evolution.control.rolled_back']);
 const CANCELLED_EVENTS = new Set(['execution.cancelled', 'task-graph.cancelled', 'mission.cancelled']);
 const FAILURE_EVENTS = new Set([
   'execution.failed', 'plan.failed', 'task-graph.failed', 'mission.failed',
-  'adaptation.failed', 'evolution.control.failed', 'evolution.control.rolled_back'
+  'adaptation.failed', 'evolution.control.failed'
 ]);
 
 function isStartEvent(type) { return START_EVENTS.has(type); }
 function isSuccessEvent(type) { return SUCCESS_EVENTS.has(type); }
+function isRollbackEvent(type) { return ROLLBACK_EVENTS.has(type); }
 function isCancelledEvent(type) { return CANCELLED_EVENTS.has(type); }
 function isFailureEvent(type) { return FAILURE_EVENTS.has(type); }
 

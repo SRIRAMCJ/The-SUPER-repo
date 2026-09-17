@@ -8,7 +8,8 @@ function proposal(status = 'accepted') {
 
 function adapterFor(state) {
   return {
-    async apply({ stage }) {
+    async apply({ context }) {
+      const stage = context.rolloutStage;
       state.values.push(stage.id);
       return { output: { stage: stage.id }, rollback: async () => { state.values.pop(); } };
     },
@@ -28,7 +29,16 @@ test('runs deterministic staged rollout and records control/audit lifecycle', as
   const record = audit.get(result.controlId);
   assert.equal(record.kind, 'evolution-control');
   assert.equal(record.status, 'succeeded');
-  assert.deepEqual(record.events.map((event) => event.type), ['evolution.control.started', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.completed']);
+  assert.deepEqual(record.events.map((event) => event.type), [
+    'evolution.control.started',
+    'evolution.control.stage.started',
+    'evolution.control.stage.healthy',
+    'evolution.control.stage.started',
+    'evolution.control.stage.healthy',
+    'evolution.control.stage.started',
+    'evolution.control.stage.healthy',
+    'evolution.control.completed'
+  ]);
   audit.close();
 });
 

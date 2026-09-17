@@ -36,6 +36,7 @@ export { ModelExecutionKernel, MODEL_EXECUTION_SCHEMA_VERSION } from './model-ex
 export { MemoryCapability, MEMORY_CAPABILITY_SCHEMA_VERSION } from './memory-capability.js';
 export { ToolRuntime, TOOL_RUNTIME_SCHEMA_VERSION, TOOL_TERMINAL_STATES } from './tool-runtime.js';
 export { DistributedCapabilityGate, DISTRIBUTED_CAPABILITY_SCHEMA_VERSION, DISTRIBUTED_NODE_STATES, DISTRIBUTED_TERMINAL_STATES } from './distributed-capability.js';
+export { RemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION, REMOTE_EXECUTION_TERMINAL_STATES } from './remote-transport.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

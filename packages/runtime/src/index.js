@@ -35,6 +35,7 @@ export { MultiAgentCoordinationKernel, MULTI_AGENT_COORDINATION_SCHEMA_VERSION }
 export { ModelExecutionKernel, MODEL_EXECUTION_SCHEMA_VERSION } from './model-execution-kernel.js';
 export { MemoryCapability, MEMORY_CAPABILITY_SCHEMA_VERSION } from './memory-capability.js';
 export { ToolRuntime, TOOL_RUNTIME_SCHEMA_VERSION, TOOL_TERMINAL_STATES } from './tool-runtime.js';
+export { SecurityCapabilityGate, SECURITY_CAPABILITY_SCHEMA_VERSION, SECURITY_TRUST_LEVELS, SECURITY_PERMISSIONS, SECURITY_DECISIONS } from './security-capability.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';
@@ -43,6 +44,7 @@ export { AdaptiveAgentRuntime } from './adaptive.js';
 export { HandoffProtocol } from './handoff.js';
 export { DelegationEngine } from './delegation.js';
 export { SharedContext } from './shared-context.js';
+export { ExecutionPolicy } from './policy.js';
 export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';

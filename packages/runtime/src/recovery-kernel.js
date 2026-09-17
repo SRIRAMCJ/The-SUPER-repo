@@ -51,12 +51,12 @@ export class RuntimeRecoveryKernel {
       this.#assertNotCancelled(signal);
       await this.lifecycle.start();
       this.#assertNotCancelled(signal);
-      const reopened = this.shutdown.reopen({ reason: 'recovery_complete' });
       let readiness = null;
       if (this.readiness) {
         readiness = await this.readiness.evaluate({ correlationId: readinessCorrelationId ?? recovery.recoveryId, signal });
         if (readiness.state === 'failed' || readiness.state === 'degraded') throw recoveryError('READINESS_FAILED', `Runtime readiness is ${readiness.state}`, true);
       }
+      const reopened = this.shutdown.reopen({ reason: 'recovery_complete' });
       const result = freeze({ schemaVersion: SCHEMA_VERSION, type: 'runtime-recovery-result', recoveryId: recovery.recoveryId, status: 'succeeded', forced, admission: clone(admission), drain: clone(drain), lifecycle: clone(this.lifecycle.snapshot()), readiness, shutdown: clone(reopened), resources: this.resources?.snapshot?.() ?? null, completedAt: this.nowIso() });
       this.#record({ ...result, event: 'completed' });
       this.#active = null;
@@ -77,21 +77,16 @@ export class RuntimeRecoveryKernel {
   history() { return Object.freeze(this.#history.map(clone)); }
   snapshot() { return freeze({ schemaVersion: SCHEMA_VERSION, state: this.state(), activeRecovery: this.#active, history: this.#history, lifecycle: clone(this.lifecycle.snapshot()), shutdown: clone(this.shutdown.snapshot()), resources: this.resources?.snapshot?.() ?? null }); }
 
-  #assertNotCancelled(signal) {
-    if (signal?.aborted) throw recoveryError('RECOVERY_CANCELLED', 'Recovery was cancelled', true);
-  }
-
+  #assertNotCancelled(signal) { if (signal?.aborted) throw recoveryError('RECOVERY_CANCELLED', 'Recovery was cancelled', true); }
   #finishCancelled(recoveryId, reason) {
     const result = freeze({ schemaVersion: SCHEMA_VERSION, type: 'runtime-recovery-result', recoveryId, status: 'cancelled', error: { code: 'RECOVERY_CANCELLED', message: reason, retryable: true }, completedAt: this.nowIso() });
     this.#record({ ...result, event: 'cancelled' });
     return result;
   }
-
   #record(value) {
     this.#history.push(freeze({ schemaVersion: SCHEMA_VERSION, id: this.idFactory('recovery-event'), timestamp: this.nowIso(), ...value }));
     while (this.#history.length > this.maxHistory) this.#history.shift();
   }
-
   nowIso() { const value = this.clock(); if (!(value instanceof Date) || Number.isNaN(value.getTime())) throw new TypeError('clock must return a valid Date'); return value.toISOString(); }
 }
 

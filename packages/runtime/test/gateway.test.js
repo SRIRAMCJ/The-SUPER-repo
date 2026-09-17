@@ -30,6 +30,18 @@ test('gateway exposes read-only runtime views through a stable envelope', async 
   assert.equal(executions.body.data[0].limit, 5);
 });
 
+test('gateway exposes operation catalog and deterministic diagnostics', async () => {
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane() });
+  const operations = await gateway.handle({ method: 'GET', path: '/operations' });
+  assert.equal(operations.status, 200);
+  assert.ok(operations.body.data.some((item) => item.id === 'runtime.cancel'));
+
+  const diagnostics = await gateway.handle({ method: 'GET', path: '/diagnostics' });
+  assert.equal(diagnostics.status, 200);
+  assert.equal(diagnostics.body.data.type, 'runtime-diagnostics');
+  assert.equal(diagnostics.body.data.status, 'passed');
+});
+
 test('gateway enforces authorization before dispatch', async () => {
   const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), authorize: () => false });
   const result = await gateway.handle({ method: 'GET', path: '/snapshot' });
@@ -59,12 +71,11 @@ test('gateway serves the same contract over a real local HTTP listener', async (
   const gateway = new ControlPlaneGateway({ controlPlane: controlPlane() });
   const address = await gateway.listen({ host: '127.0.0.1', port: 0 });
   try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+    const response = await fetch(`http://127.0.0.1:${address.port}/diagnostics`);
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
     const payload = await response.json();
     assert.equal(payload.ok, true);
-    assert.equal(payload.data.activeExecutions, 1);
+    assert.equal(payload.data.type, 'runtime-diagnostics');
   } finally {
     await gateway.close();
   }

@@ -1,16 +1,19 @@
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
+import { RuntimeOperations } from './operations.js';
 
 const SCHEMA_VERSION = '0.1.0';
 
 export class ControlPlaneGateway {
-  constructor({ controlPlane, authorize = () => true, maxBodyBytes = 65536 } = {}) {
+  constructor({ controlPlane, operations = null, authorize = () => true, maxBodyBytes = 65536 } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function' || typeof controlPlane.snapshot !== 'function') {
       throw new TypeError('ControlPlaneGateway requires a compatible runtime control plane');
     }
+    if (operations && typeof operations.getOperations !== 'function') throw new TypeError('operations must expose getOperations()');
     if (typeof authorize !== 'function') throw new TypeError('authorize must be a function');
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) throw new TypeError('maxBodyBytes must be an integer >= 1024');
     this.controlPlane = controlPlane;
+    this.operations = operations ?? new RuntimeOperations({ controlPlane });
     this.authorize = authorize;
     this.maxBodyBytes = maxBodyBytes;
     this.server = null;
@@ -37,6 +40,8 @@ export class ControlPlaneGateway {
       if (method === 'GET' && route === '/executions') return ok(this.controlPlane.getExecutions(executionFilter(parsed.searchParams)));
       if (method === 'GET' && route === '/evolution') return ok(await this.controlPlane.getEvolution());
       if (method === 'GET' && route === '/snapshot') return ok(await this.controlPlane.snapshot());
+      if (method === 'GET' && route === '/operations') return ok(this.operations.getOperations());
+      if (method === 'GET' && route === '/diagnostics') return ok(await this.operations.diagnostics());
       if (method === 'POST' && /^\/executions\/[^/]+\/cancel$/.test(route)) {
         const executionId = decodeURIComponent(route.split('/')[2]);
         const body = request.body === undefined ? {} : request.body;

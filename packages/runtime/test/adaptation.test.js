@@ -67,6 +67,29 @@ test('rolls back a mutation when verification fails', async () => {
   assert.equal(events.history({ type: 'adaptation.rolled_back' }).length, 1);
 });
 
+test('rolls back safely when verification throws', async () => {
+  const state = { value: 'original' };
+  const engine = new AdaptationEngine({
+    adapter: adapterFor(state),
+    verificationEngine: { verify: async () => { throw Object.assign(new Error('verifier unavailable'), { code: 'VERIFY_UNAVAILABLE' }); } }
+  });
+  const result = await engine.apply(proposal());
+  assert.equal(result.status, 'rolled_back');
+  assert.equal(state.value, 'original');
+  assert.equal(result.error.code, 'VERIFY_UNAVAILABLE');
+});
+
+test('does not mutate when expected state version is stale before adaptation', async () => {
+  let applied = false;
+  const engine = new AdaptationEngine({
+    adapter: { apply: async () => { applied = true; return { rollback: async () => {} }; }, rollback: async () => {} }
+  });
+  const result = await engine.apply(proposal(), {}, 7);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'EXECUTION_STATE_CONFLICT');
+  assert.equal(applied, false);
+});
+
 test('supports explicit rollback with optimistic concurrency', async () => {
   const state = { value: 'original' };
   const store = new ExecutionStateStore();
@@ -76,7 +99,8 @@ test('supports explicit rollback with optimistic concurrency', async () => {
   const rollback = await engine.rollback(result.adaptationId, current.version);
   assert.equal(rollback.status, 'rolled_back');
   assert.equal(state.value, 'original');
-  await assert.rejects(() => engine.rollback(result.adaptationId, current.version), (error) => error.code === 'EXECUTION_STATE_CONFLICT' || error.code === 'ADAPTATION_NOT_APPLIED');
+  const staleRollback = await engine.rollback(result.adaptationId, current.version);
+  assert.equal(staleRollback.error.code, 'ADAPTATION_NOT_APPLIED');
 });
 
 test('preserves state-store persistence across engine instances', async () => {

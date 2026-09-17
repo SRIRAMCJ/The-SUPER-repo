@@ -44,3 +44,10 @@ test('rejects mismatched benchmarks and invalid gates', () => {
   assert.equal(mismatch.error.code, 'BENCHMARK_MISMATCH');
   assert.throws(() => engine.compare(run('a', 1, 1, 0), run('a', 1, 1, 0), { minPassRate: 2 }), { message: 'Benchmark gate minPassRate must be a valid non-negative number' });
 });
+
+test('rejects inconsistent benchmark metrics instead of calculating from corrupt input', () => {
+  const engine = new BenchmarkRegressionEngine();
+  assert.throws(() => engine.compare(run('bench', 0.5, 8, 2), run('bench', 0.8, 8, 2)), /passRate must match/);
+  assert.throws(() => engine.compare(run('bench', 0.8, 8, 1), run('bench', 0.8, 8, 2)), /counts must equal caseCount/);
+  assert.throws(() => engine.compare(run('bench', 1.2, 1, 0), run('bench', 1, 1, 0)), /passRate between 0 and 1/);
+});

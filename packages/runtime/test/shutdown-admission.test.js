@@ -56,3 +56,9 @@ test('rejects cancellation during drain without reopening admission', async () =
   assert.equal(runtime.state(), 'draining');
   assert.throws(() => runtime.admit({ executionId: 'e2' }), { code: 'ADMISSION_CLOSED' });
 });
+
+test('rejects duplicate execution admission while the first lease is active', () => {
+  const runtime = new RuntimeShutdownAdmission();
+  runtime.admit({ executionId: 'e1' });
+  assert.throws(() => runtime.admit({ executionId: 'e1' }), { code: 'EXECUTION_ALREADY_ADMITTED' });
+});

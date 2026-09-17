@@ -13,16 +13,20 @@ const TRANSITIONS = Object.freeze({
 });
 
 export class RuntimeLifecycleManager {
-  constructor({ components = [], clock = () => new Date(), onTransition = () => {} } = {}) {
+  constructor({ components = [], clock = () => new Date(), onTransition = () => {}, maxHistory = 1000 } = {}) {
     if (!Array.isArray(components)) throw new TypeError('components must be an array');
     if (typeof clock !== 'function' || typeof onTransition !== 'function') throw new TypeError('clock and onTransition must be functions');
+    if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     this.components = normalizeComponents(components);
     this.clock = clock;
     this.onTransition = onTransition;
+    this.maxHistory = maxHistory;
     this.state = 'bootstrap';
     this.history = [];
     this.activeOperation = null;
+    this.startedComponents = new Set();
     this.sequence = 0;
+    this.operationQueue = Promise.resolve();
   }
 
   getState() {
@@ -38,32 +42,53 @@ export class RuntimeLifecycleManager {
     return Object.freeze(this.components.map((component) => Object.freeze({ name: component.name, dependsOn: [...component.dependsOn] })));
   }
 
-  async start() {
+  start() {
+    return this.#exclusive(() => this.#start());
+  }
+
+  async #start() {
     this.assertState(['bootstrap', 'stopped', 'failed'], 'start');
-    await this.transition('initializing', 'start');
+    await this.#transition('initializing', 'start');
+    const started = [];
     try {
-      for (const component of orderComponents(this.components)) await this.invoke(component, 'start');
-      await this.transition('ready', 'start');
-      await this.transition('running', 'start');
+      for (const component of orderComponents(this.components)) {
+        await this.invoke(component, 'start');
+        started.push(component);
+        this.startedComponents.add(component.name);
+      }
+      await this.#transition('ready', 'start');
+      await this.#transition('running', 'start');
       return this.getState();
     } catch (error) {
+      await this.#rollbackStarted(started);
       await this.fail('start', error);
       throw error;
     }
   }
 
-  async drain() {
-    this.assertState(['running'], 'drain');
-    await this.transition('draining', 'drain');
-    return this.getState();
+  drain() {
+    return this.#exclusive(async () => {
+      this.assertState(['running'], 'drain');
+      await this.#transition('draining', 'drain');
+      for (const component of orderComponents(this.components)) await this.invoke(component, 'drain');
+      return this.getState();
+    });
   }
 
-  async stop() {
+  stop() {
+    return this.#exclusive(() => this.#stop());
+  }
+
+  async #stop() {
     this.assertState(['bootstrap', 'initializing', 'ready', 'running', 'draining', 'failed'], 'stop');
-    if (this.state !== 'stopping') await this.transition('stopping', 'stop');
+    if (this.state !== 'stopping') await this.#transition('stopping', 'stop');
     try {
-      for (const component of orderComponents(this.components).reverse()) await this.invoke(component, 'stop');
-      await this.transition('stopped', 'stop');
+      const ordered = orderComponents(this.components).reverse();
+      for (const component of ordered) {
+        if (this.startedComponents.has(component.name)) await this.invoke(component, 'stop');
+      }
+      this.startedComponents.clear();
+      await this.#transition('stopped', 'stop');
       return this.getState();
     } catch (error) {
       await this.fail('stop', error);
@@ -71,7 +96,11 @@ export class RuntimeLifecycleManager {
     }
   }
 
-  async transition(nextState, reason = 'transition') {
+  transition(nextState, reason = 'transition') {
+    return this.#exclusive(() => this.#transition(nextState, reason));
+  }
+
+  async #transition(nextState, reason = 'transition') {
     if (!STATES.includes(nextState)) throw new TypeError(`Unknown lifecycle state: ${nextState}`);
     if (nextState === this.state) return this.getState();
     if (!TRANSITIONS[this.state].includes(nextState)) throw new Error(`Invalid lifecycle transition: ${this.state} -> ${nextState}`);
@@ -80,7 +109,7 @@ export class RuntimeLifecycleManager {
     this.sequence += 1;
     const entry = Object.freeze({ sequence: this.sequence, previous, state: nextState, reason, timestamp: this.clock().toISOString() });
     this.history.push(entry);
-    if (this.history.length > 1000) this.history.shift();
+    if (this.history.length > this.maxHistory) this.history.splice(0, this.history.length - this.maxHistory);
     await this.onTransition(structuredClone(entry));
     return this.getState();
   }
@@ -89,16 +118,34 @@ export class RuntimeLifecycleManager {
     const handler = component[method];
     if (typeof handler !== 'function') return;
     this.activeOperation = { component: component.name, operation: method, startedAt: this.clock().toISOString() };
-    try {
-      await handler.call(component.context ?? component);
-    } finally {
-      this.activeOperation = null;
+    try { await handler.call(component.context ?? component); }
+    finally { this.activeOperation = null; }
+  }
+
+  async #rollbackStarted(started) {
+    for (const component of [...started].reverse()) {
+      try {
+        await this.invoke(component, 'stop');
+        this.startedComponents.delete(component.name);
+      } catch (rollbackError) {
+        this.history.push(Object.freeze({ sequence: ++this.sequence, previous: this.state, state: this.state, reason: 'startup-rollback', error: errorMessage(rollbackError), timestamp: this.clock().toISOString() }));
+        if (this.history.length > this.maxHistory) this.history.shift();
+      }
     }
   }
 
   async fail(reason, error) {
-    if (this.state !== 'failed' && TRANSITIONS[this.state].includes('failed')) await this.transition('failed', reason);
-    if (this.state === 'failed') this.history.push(Object.freeze({ sequence: ++this.sequence, previous: 'failed', state: 'failed', reason, error: errorMessage(error), timestamp: this.clock().toISOString() }));
+    if (this.state !== 'failed' && TRANSITIONS[this.state].includes('failed')) await this.#transition('failed', reason);
+    if (this.state === 'failed') {
+      this.history.push(Object.freeze({ sequence: ++this.sequence, previous: 'failed', state: 'failed', reason, error: errorMessage(error), timestamp: this.clock().toISOString() }));
+      if (this.history.length > this.maxHistory) this.history.shift();
+    }
+  }
+
+  #exclusive(operation) {
+    const run = this.operationQueue.then(operation, operation);
+    this.operationQueue = run.catch(() => undefined);
+    return run;
   }
 
   assertState(allowed, operation) {

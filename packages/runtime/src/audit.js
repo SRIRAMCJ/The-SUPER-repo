@@ -29,6 +29,9 @@ export class ExecutionAudit {
     } else if (isSuccessEvent(event.type)) {
       record.finishedAt = timestamp;
       record.status = 'succeeded';
+    } else if (isRollbackEvent(event.type)) {
+      record.finishedAt = timestamp;
+      record.status = 'rolled_back';
     } else if (isCancelledEvent(event.type)) {
       record.finishedAt = timestamp;
       record.status = 'cancelled';
@@ -54,20 +57,22 @@ export class ExecutionAudit {
 const START_EVENTS = new Set([
   'execution.started', 'plan.started', 'plan.resumed',
   'task-graph.started', 'task-graph.resumed', 'mission.started',
-  'adaptation.started'
+  'adaptation.started', 'evolution.control.started'
 ]);
 const SUCCESS_EVENTS = new Set([
   'execution.completed', 'plan.completed', 'task-graph.completed',
-  'mission.completed', 'adaptation.completed'
+  'mission.completed', 'adaptation.completed', 'evolution.control.completed'
 ]);
+const ROLLBACK_EVENTS = new Set(['adaptation.rolled_back', 'evolution.control.rolled_back']);
 const CANCELLED_EVENTS = new Set(['execution.cancelled', 'task-graph.cancelled', 'mission.cancelled']);
 const FAILURE_EVENTS = new Set([
   'execution.failed', 'plan.failed', 'task-graph.failed', 'mission.failed',
-  'adaptation.failed'
+  'adaptation.failed', 'evolution.control.failed'
 ]);
 
 function isStartEvent(type) { return START_EVENTS.has(type); }
 function isSuccessEvent(type) { return SUCCESS_EVENTS.has(type); }
+function isRollbackEvent(type) { return ROLLBACK_EVENTS.has(type); }
 function isCancelledEvent(type) { return CANCELLED_EVENTS.has(type); }
 function isFailureEvent(type) { return FAILURE_EVENTS.has(type); }
 
@@ -76,6 +81,7 @@ function inferKind(type) {
   if (type?.startsWith('mission.')) return 'mission';
   if (type?.startsWith('plan.')) return 'plan';
   if (type?.startsWith('adaptation.')) return 'adaptation';
+  if (type?.startsWith('evolution.control.')) return 'evolution-control';
   return 'execution';
 }
 

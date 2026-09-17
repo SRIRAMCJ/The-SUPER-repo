@@ -17,6 +17,7 @@ export { BenchmarkRegressionEngine } from './benchmark-regression.js';
 export { BenchmarkGovernanceEngine } from './benchmark-governance.js';
 export { EvolutionEngine } from './evolution.js';
 export { AdaptationEngine } from './adaptation.js';
+export { EvolutionControlPlane } from './evolution-control.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

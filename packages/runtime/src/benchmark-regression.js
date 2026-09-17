@@ -44,16 +44,22 @@ export class BenchmarkRegressionEngine {
 function validateRun(run, label) {
   if (!run || typeof run !== 'object' || Array.isArray(run)) throw new TypeError(`${label} benchmark run must be an object`);
   if (run.type !== 'benchmark-run') throw new TypeError(`${label} benchmark run requires type benchmark-run`);
-  for (const field of ['benchmarkSuiteId', 'caseCount', 'passed', 'failed', 'passRate']) {
-    if (run[field] === undefined) throw new TypeError(`${label} benchmark run requires ${field}`);
+  if (typeof run.benchmarkSuiteId !== 'string' || !run.benchmarkSuiteId.trim()) throw new TypeError(`${label} benchmark run requires benchmarkSuiteId`);
+  for (const field of ['caseCount', 'passed', 'failed', 'passRate']) {
+    if (!Number.isFinite(run[field]) || run[field] < 0) throw new TypeError(`${label} benchmark run requires a valid non-negative ${field}`);
   }
+  if (!Number.isFinite(run.passRate) || run.passRate < 0 || run.passRate > 1) throw new TypeError(`${label} benchmark run requires passRate between 0 and 1`);
+  if (run.passed + run.failed !== run.caseCount) throw new TypeError(`${label} benchmark run counts must equal caseCount`);
+  const expectedPassRate = run.caseCount === 0 ? 0 : run.passed / run.caseCount;
+  if (Math.abs(run.passRate - expectedPassRate) > Number.EPSILON * 8) throw new TypeError(`${label} benchmark run passRate must match passed/caseCount`);
   if (!Array.isArray(run.suites)) throw new TypeError(`${label} benchmark run requires suites`);
 }
 
 function indexSuites(run) {
   const map = new Map();
   for (const suite of run.suites) {
-    if (!suite || typeof suite.suiteId !== 'string' || map.has(suite.suiteId)) throw new TypeError('Benchmark run suites require unique suiteId values');
+    if (!suite || typeof suite.suiteId !== 'string' || !suite.suiteId.trim() || map.has(suite.suiteId)) throw new TypeError('Benchmark run suites require unique non-empty suiteId values');
+    if (!Number.isFinite(suite.passed) || suite.passed < 0 || !Number.isFinite(suite.failed) || suite.failed < 0) throw new TypeError('Benchmark run suite counts must be valid non-negative numbers');
     map.set(suite.suiteId, suite);
   }
   return map;

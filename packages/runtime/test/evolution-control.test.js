@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptationEngine, EventBus, ExecutionAudit, ExecutionStateStore, EvolutionControlPlane, PolicyEngine } from '../src/index.js';
+import { AdaptationEngine, EventBus, ExecutionAudit, ExecutionStateStore, EvolutionControlPlane, PolicyEngine, isTerminalExecutionStatus } from '../src/index.js';
 
 function proposal(status = 'accepted') {
   return { proposalId: 'proposal-1', suiteId: 'suite-1', status, revision: 2, metadata: { risk: 'low' } };
@@ -59,6 +59,7 @@ test('records a rolled-back control as a terminal audit outcome', async () => {
   const result = await control.run(proposal(), { stages: [{ id: 'full', fraction: 1 }], healthCheck: async () => ({ healthy: false, code: 'BAD_HEALTH', reason: 'regression' }) });
   assert.equal(result.status, 'rolled_back');
   assert.equal(audit.get(result.controlId).status, 'rolled_back');
+  assert.equal(isTerminalExecutionStatus('rolled_back'), true);
   audit.close();
 });
 

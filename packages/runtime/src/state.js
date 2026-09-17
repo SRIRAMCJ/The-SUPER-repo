@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'rolled_back']);
 
 export class ExecutionStateStore {
   #states = new Map();

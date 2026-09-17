@@ -1,5 +1,5 @@
-const SCHEMA_VERSION = '0.2.0';
-const READINESS_STATES = Object.freeze(['starting', 'ready', 'degraded', 'draining', 'stopped', 'failed']);
+const SCHEMA_VERSION = '0.2.1';
+const READINESS_STATES = Object.freeze(['starting', 'ready', 'degraded', 'draining', 'stopped', 'failed', 'cancelled']);
 const PROBE_STATES = Object.freeze(['unknown', 'healthy', 'unhealthy']);
 
 function assertString(value, name) {
@@ -45,12 +45,12 @@ export class RuntimeReadinessKernel {
   }
 
   async evaluate({ correlationId = this.idFactory(), signal } = {}) {
-    if (signal?.aborted) return this.#record('draining', correlationId, { reason: 'aborted' });
+    if (signal?.aborted) return this.#record('cancelled', correlationId, { reason: 'aborted' });
     const lifecycle = this.lifecycle.snapshot();
     const dependencyResults = [];
     let requiredFailure = false;
     for (const dependency of this.dependencies.values()) {
-      if (signal?.aborted) return this.#record('draining', correlationId, { reason: 'aborted', lifecycleState: lifecycle.state, dependencies: dependencyResults, probes: [] });
+      if (signal?.aborted) return this.#record('cancelled', correlationId, { reason: 'aborted', lifecycleState: lifecycle.state, dependencies: dependencyResults, probes: [] });
       try {
         const result = await dependency.check({ signal, correlationId });
         const healthy = result === true || result?.healthy === true;
@@ -63,7 +63,7 @@ export class RuntimeReadinessKernel {
     }
     const probeResults = [];
     for (const [id, probe] of this.probes) {
-      if (signal?.aborted) return this.#record('draining', correlationId, { reason: 'aborted', lifecycleState: lifecycle.state, dependencies: dependencyResults, probes: probeResults });
+      if (signal?.aborted) return this.#record('cancelled', correlationId, { reason: 'aborted', lifecycleState: lifecycle.state, dependencies: dependencyResults, probes: probeResults });
       try {
         const result = await probe({ signal, correlationId });
         probeResults.push({ id, state: result === true || result?.healthy === true ? 'healthy' : 'unhealthy' });
@@ -77,8 +77,7 @@ export class RuntimeReadinessKernel {
     else if (['draining', 'stopping'].includes(lifecycleState)) state = 'draining';
     else if (lifecycleState === 'stopped') state = 'stopped';
     else if (lifecycleState === 'failed') state = 'failed';
-    else if (requiredFailure) state = 'failed';
-    else if (probeResults.some((item) => item.state === 'unhealthy') || dependencyResults.some((item) => !item.required && item.state === 'unhealthy')) state = 'degraded';
+    else if (requiredFailure || dependencyResults.some((item) => item.state === 'unhealthy') || probeResults.some((item) => item.state === 'unhealthy')) state = 'degraded';
     return this.#record(state, correlationId, { lifecycleState, dependencies: dependencyResults, probes: probeResults });
   }
 

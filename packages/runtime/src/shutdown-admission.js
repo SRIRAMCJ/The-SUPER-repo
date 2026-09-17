@@ -20,13 +20,7 @@ export class RuntimeShutdownAdmission {
     if (typeof executionId !== 'string' || executionId.length === 0) throw shutdownError('EXECUTION_ID_INVALID', 'executionId is required');
     if (this.#state !== 'accepting') throw shutdownError('ADMISSION_CLOSED', `Runtime is ${this.#state}`, true);
     if (this.#active.has(executionId)) throw shutdownError('EXECUTION_ALREADY_ADMITTED', `Execution is already admitted: ${executionId}`);
-    const lease = freeze({
-      schemaVersion: SCHEMA_VERSION,
-      admissionId: this.idFactory('admission'),
-      executionId,
-      admittedAt: this.clock(),
-      metadata: sanitize(metadata),
-    });
+    const lease = freeze({ schemaVersion: SCHEMA_VERSION, admissionId: this.idFactory('admission'), executionId, admittedAt: this.clock(), metadata: sanitize(metadata) });
     this.#active.set(executionId, lease);
     return clone(lease);
   }
@@ -44,11 +38,7 @@ export class RuntimeShutdownAdmission {
     if (this.#state === 'draining') return this.snapshot();
     const now = this.clock();
     this.#state = 'draining';
-    this.#record('draining', null, {
-      reason: sanitizeReason(reason),
-      deadlineAt: now + deadlineMs,
-      activeExecutions: this.#active.size,
-    });
+    this.#record('draining', null, { reason: sanitizeReason(reason), deadlineAt: now + deadlineMs, activeExecutions: this.#active.size });
     return this.snapshot();
   }
 
@@ -56,7 +46,7 @@ export class RuntimeShutdownAdmission {
     if (this.#state === 'accepting') throw shutdownError('DRAIN_NOT_STARTED', 'beginDrain() must be called before waitForDrain()');
     if (!Number.isInteger(deadlineMs) || deadlineMs < 0) throw shutdownError('DEADLINE_INVALID', 'deadlineMs must be a non-negative integer');
     if (!Number.isInteger(pollMs) || pollMs < 0) throw shutdownError('POLL_INTERVAL_INVALID', 'pollMs must be a non-negative integer');
-    const deadline = this.clock() + deadlineMs;
+    const deadline = this.#history.findLast((entry) => entry.event === 'draining')?.deadlineAt ?? (this.clock() + deadlineMs);
     while (this.#active.size > 0) {
       if (signal?.aborted) throw shutdownError('DRAIN_CANCELLED', 'Drain wait was cancelled', true);
       if (this.clock() >= deadline) {
@@ -64,7 +54,7 @@ export class RuntimeShutdownAdmission {
         this.#record('deadline_exceeded', null, { remainingExecutions: remaining });
         throw Object.assign(shutdownError('DRAIN_DEADLINE_EXCEEDED', 'Shutdown drain deadline exceeded', true), { remainingExecutions: remaining });
       }
-      await delay(pollMs, signal);
+      await delay(Math.min(pollMs, Math.max(0, deadline - this.clock())), signal);
     }
     this.#state = 'stopped';
     this.#record('drained', null, { remainingExecutions: [] });
@@ -83,15 +73,7 @@ export class RuntimeShutdownAdmission {
   activeExecutions() { return Object.freeze([...this.#active.keys()].sort()); }
   history() { return Object.freeze(this.#history.map(clone)); }
 
-  snapshot() {
-    return freeze({
-      schemaVersion: SCHEMA_VERSION,
-      state: this.#state,
-      activeCount: this.#active.size,
-      activeExecutions: [...this.#active.keys()].sort(),
-      history: this.#history,
-    });
-  }
+  snapshot() { return freeze({ schemaVersion: SCHEMA_VERSION, state: this.#state, activeCount: this.#active.size, activeExecutions: [...this.#active.keys()].sort(), history: this.#history }); }
 
   #record(event, executionId, details) {
     this.#history.push(freeze({ schemaVersion: SCHEMA_VERSION, id: this.idFactory('shutdown'), event, executionId, timestamp: this.clock(), ...details }));

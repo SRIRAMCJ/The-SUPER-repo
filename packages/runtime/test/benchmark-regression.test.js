@@ -47,7 +47,9 @@ test('rejects mismatched benchmarks and invalid gates', () => {
 
 test('rejects inconsistent benchmark metrics instead of calculating from corrupt input', () => {
   const engine = new BenchmarkRegressionEngine();
-  assert.throws(() => engine.compare(run('bench', 0.5, 8, 2), run('bench', 0.8, 8, 2)), /passRate must match/);
-  assert.throws(() => engine.compare(run('bench', 0.8, 8, 1), run('bench', 0.8, 8, 2)), /counts must equal caseCount/);
+  const badPassRate = run('bench', 0.5, 8, 2);
+  const badCounts = { ...run('bench', 0.8, 8, 1), caseCount: 10 };
+  assert.throws(() => engine.compare(badPassRate, run('bench', 0.8, 8, 2)), /passRate must match/);
+  assert.throws(() => engine.compare(badCounts, run('bench', 0.8, 8, 2)), /counts must equal caseCount/);
   assert.throws(() => engine.compare(run('bench', 1.2, 1, 0), run('bench', 1, 1, 0)), /passRate between 0 and 1/);
 });

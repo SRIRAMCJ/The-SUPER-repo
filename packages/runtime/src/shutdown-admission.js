@@ -69,6 +69,15 @@ export class RuntimeShutdownAdmission {
     return this.snapshot();
   }
 
+  reopen({ reason = 'restart' } = {}) {
+    if (this.#active.size > 0) throw shutdownError('ACTIVE_EXECUTIONS_PRESENT', 'Cannot reopen admission while executions remain active');
+    if (this.#state === 'accepting') return this.snapshot();
+    if (this.#state !== 'stopped') throw shutdownError('ADMISSION_NOT_STOPPED', `Cannot reopen runtime while it is ${this.#state}`);
+    this.#state = 'accepting';
+    this.#record('reopened', null, { reason: sanitizeReason(reason) });
+    return this.snapshot();
+  }
+
   isAdmitted(executionId) { return this.#active.has(executionId); }
   activeExecutions() { return Object.freeze([...this.#active.keys()].sort()); }
   history() { return Object.freeze(this.#history.map(clone)); }

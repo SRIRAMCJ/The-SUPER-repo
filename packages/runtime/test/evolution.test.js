@@ -77,10 +77,11 @@ test('supports explicit rejection and auditable rollback', async () => {
 });
 
 test('enforces optimistic concurrency for evolution decisions', async () => {
-  const engine = new EvolutionEngine();
+  const store = new ExecutionStateStore();
+  const engine = new EvolutionEngine({ store });
   const proposal = await engine.propose(evaluation([failedCase('a', 'cap.alpha')]));
-  await engine.accept(proposal.proposalId, { approval: true }, 0);
-  await assert.rejects(() => engine.reject(proposal.proposalId, 'stale', 0), (error) => error.code === 'EXECUTION_STATE_CONFLICT');
+  await store.update(`evolution-proposal:${proposal.proposalId}`, { metadata: { ...proposal.metadata, touched: true } }, 0);
+  await assert.rejects(() => engine.accept(proposal.proposalId, { approval: true }, 0), (error) => error.code === 'EXECUTION_STATE_CONFLICT');
 });
 
 test('supports a shared persistent state store', async () => {

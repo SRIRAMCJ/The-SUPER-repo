@@ -60,5 +60,6 @@ test('dependency exceptions are isolated and classified as unhealthy', async () 
   const result = await kernel.evaluate();
   assert.equal(result.state, 'degraded');
   assert.equal(result.dependencies[0].state, 'unhealthy');
-  assert.equal(result.dependencies[0].error, 'db down');
+  assert.equal(result.dependencies[0].error.code, 'READINESS_PROBE_FAILED');
+  assert.equal(result.dependencies[0].error.message, 'db down');
 });

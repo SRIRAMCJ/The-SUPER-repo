@@ -1,14 +1,16 @@
 export class RuntimeControlPlane {
-  constructor({ eventBus = null, observability, stateStore = null, evolutionControlPlane = null, executionEngine = null, clock = () => new Date(), failureWindowMs = 300000, maxRecentExecutions = 100, maxRecentEvents = 100 } = {}) {
+  constructor({ eventBus = null, observability, stateStore = null, evolutionControlPlane = null, executionEngine = null, recoveryKernel = null, clock = () => new Date(), failureWindowMs = 300000, maxRecentExecutions = 100, maxRecentEvents = 100 } = {}) {
     if (!observability || typeof observability.getMetrics !== 'function') throw new TypeError('RuntimeControlPlane requires a compatible observability engine');
     if (eventBus && typeof eventBus.on !== 'function') throw new TypeError('RuntimeControlPlane requires a compatible event bus');
     if (stateStore && typeof stateStore.list !== 'function') throw new TypeError('RuntimeControlPlane requires a compatible state store');
     if (evolutionControlPlane && typeof evolutionControlPlane.list !== 'function') throw new TypeError('RuntimeControlPlane requires a compatible evolution control plane');
     if (executionEngine && typeof executionEngine.cancel !== 'function') throw new TypeError('RuntimeControlPlane requires an execution engine with cancel()');
+    if (recoveryKernel && typeof recoveryKernel.recover !== 'function' || recoveryKernel && typeof recoveryKernel.snapshot !== 'function') throw new TypeError('recoveryKernel must expose recover() and snapshot()');
     this.observability = observability;
     this.stateStore = stateStore;
     this.evolutionControlPlane = evolutionControlPlane;
     this.executionEngine = executionEngine;
+    this.recoveryKernel = recoveryKernel;
     this.clock = clock;
     this.failureWindowMs = failureWindowMs;
     this.maxRecentExecutions = maxRecentExecutions;
@@ -50,6 +52,16 @@ export class RuntimeControlPlane {
     return freeze({ schemaVersion: '0.1.0', type: 'runtime-evolution-view', generatedAt: this.clock().toISOString(), active: controls.filter((control) => control.status === 'running').length, controls, recentEvents: events.slice(-this.maxRecentEvents) });
   }
 
+  async getRecovery() {
+    if (!this.recoveryKernel) return freeze({ schemaVersion: '0.1.0', type: 'runtime-recovery-view', configured: false, state: 'unavailable' });
+    return freeze({ schemaVersion: '0.1.0', type: 'runtime-recovery-view', configured: true, ...await this.recoveryKernel.snapshot() });
+  }
+
+  async recover(input = {}) {
+    if (!this.recoveryKernel) return freeze({ schemaVersion: '0.1.0', type: 'control-action-result', action: 'recover', status: 'unsupported' });
+    return this.recoveryKernel.recover(input);
+  }
+
   async cancelExecution(executionId, reason = 'Cancelled by runtime control plane') {
     if (typeof executionId !== 'string' || !executionId.trim()) throw new TypeError('executionId must be a non-empty string');
     if (!this.executionEngine) return freeze({ schemaVersion: '0.1.0', type: 'control-action-result', action: 'cancel_execution', status: 'unsupported', executionId, reason });
@@ -57,7 +69,7 @@ export class RuntimeControlPlane {
   }
 
   async snapshot() {
-    return freeze({ schemaVersion: '0.1.0', type: 'runtime-control-plane-snapshot', generatedAt: this.clock().toISOString(), health: this.getHealth(), metrics: this.observability.getMetrics(), executions: this.getExecutions(), evolution: await this.getEvolution(), traces: this.observability.getTraces(), recentEvents: this.observability.getEvents().slice(-this.maxRecentEvents) });
+    return freeze({ schemaVersion: '0.1.0', type: 'runtime-control-plane-snapshot', generatedAt: this.clock().toISOString(), health: this.getHealth(), metrics: this.observability.getMetrics(), executions: this.getExecutions(), evolution: await this.getEvolution(), recovery: await this.getRecovery(), traces: this.observability.getTraces(), recentEvents: this.observability.getEvents().slice(-this.maxRecentEvents) });
   }
 
   close() { if (this.unsubscribe) { this.unsubscribe(); this.unsubscribe = null; } }

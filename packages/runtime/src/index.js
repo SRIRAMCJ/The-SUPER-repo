@@ -22,6 +22,7 @@ export { ObservabilityEngine } from './observability.js';
 export { RuntimeControlPlane } from './control-plane.js';
 export { RuntimeOperations } from './operations.js';
 export { OperationsRuntimeKernel, OPERATIONS_RUNTIME_SCHEMA_VERSION, OPERATIONS_RUNTIME_STATES, OPERATIONS_RUNTIME_ACTIONS } from './operations-kernel.js';
+export { RuntimeResourceGovernance, RESOURCE_GOVERNANCE_SCHEMA_VERSION, RESOURCE_GOVERNANCE_KEYS } from './resource-governance.js';
 export { RuntimeCommandBus } from './command-bus.js';
 export { RuntimeLifecycleManager, RUNTIME_LIFECYCLE_STATES } from './lifecycle.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';

@@ -26,7 +26,7 @@ test('runs deterministic staged rollout and records control/audit lifecycle', as
   assert.equal(result.stageCount, 3);
   assert.deepEqual(state.values, ['canary', 'progressive', 'full']);
   const record = audit.get(result.controlId);
-  assert.equal(record.kind, 'execution');
+  assert.equal(record.kind, 'evolution-control');
   assert.equal(record.status, 'succeeded');
   assert.deepEqual(record.events.map((event) => event.type), ['evolution.control.started', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.stage.started', 'adaptation.started', 'adaptation.completed', 'evolution.control.stage.healthy', 'evolution.control.completed']);
   audit.close();
@@ -39,6 +39,17 @@ test('halts on unhealthy stage and rolls back all prior adaptations', async () =
   assert.equal(result.status, 'rolled_back');
   assert.equal(state.values.length, 0);
   assert.equal(result.error.code, 'ROLLOUT_UNHEALTHY');
+});
+
+test('records a rolled-back control as a terminal audit outcome', async () => {
+  const state = { values: [] };
+  const events = new EventBus();
+  const audit = new ExecutionAudit({ events });
+  const control = new EvolutionControlPlane({ adaptationEngine: new AdaptationEngine({ adapter: adapterFor(state), eventBus: events }), eventBus: events });
+  const result = await control.run(proposal(), { stages: [{ id: 'full', fraction: 1 }], healthCheck: async () => ({ healthy: false, code: 'BAD_HEALTH', reason: 'regression' }) });
+  assert.equal(result.status, 'rolled_back');
+  assert.equal(audit.get(result.controlId).status, 'rolled_back');
+  audit.close();
 });
 
 test('does not mutate when control policy denies', async () => {

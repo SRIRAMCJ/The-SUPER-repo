@@ -31,6 +31,7 @@ export { TaskGraphExecutor } from './task-graph-executor.js';
 export { AgentPlanningKernel, AGENT_PLANNING_SCHEMA_VERSION, AGENT_PLANNING_DECISIONS } from './agent-planning.js';
 export { AgentExecutionAdmission, AGENT_EXECUTION_ADMISSION_SCHEMA_VERSION, AGENT_EXECUTION_ADMISSION_DECISIONS, fingerprintAgentPlan } from './agent-execution-admission.js';
 export { AgentExecutionOrchestrator, AGENT_EXECUTION_ORCHESTRATION_SCHEMA_VERSION } from './agent-execution-orchestrator.js';
+export { MultiAgentCoordinationKernel, MULTI_AGENT_COORDINATION_SCHEMA_VERSION } from './multi-agent-coordination.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

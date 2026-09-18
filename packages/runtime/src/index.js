@@ -64,3 +64,4 @@ export { RecoveryLeaseKernel, RECOVERY_LEASE_SCHEMA_VERSION, RECOVERY_LEASE_STAT
 export { DistributedTransactionRecovery, DISTRIBUTED_TRANSACTION_RECOVERY_SCHEMA_VERSION, DISTRIBUTED_TRANSACTION_RECOVERY_STATES } from './distributed-recovery.js';
 export { RecoveryStateReplicator, RECOVERY_STATE_REPLICATION_SCHEMA_VERSION, RECOVERY_STATE_REPLICATION_STATES } from './recovery-state-replication.js';
 export { RecoveryHandoffKernel, RECOVERY_HANDOFF_SCHEMA_VERSION, RECOVERY_HANDOFF_STATES } from './recovery-handoff.js';
+export { RecoveryFailoverOrchestrator, RECOVERY_FAILOVER_SCHEMA_VERSION, RECOVERY_FAILOVER_STATES } from './recovery-failover.js';

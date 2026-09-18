@@ -58,3 +58,4 @@ export { SharedContext } from './shared-context.js';
 export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';
+export { ExecutionSandbox, SANDBOX_SCHEMA_VERSION, SANDBOX_TERMINAL_STATES } from './sandbox.js';

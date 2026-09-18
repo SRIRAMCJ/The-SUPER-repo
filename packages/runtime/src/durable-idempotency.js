@@ -63,7 +63,7 @@ export class DurableIdempotencyStore {
         return freeze({ state: 'in_progress', record: existing });
       }
       const record = freeze({ schemaVersion: SCHEMA_VERSION, key: normalizedKey, status: 'pending', fingerprint, response: null, createdAt: this.clock(), expiresAt });
-      await this.#append({ schemaVersion: SCHEMA_VERSION, op: 'put', ...record });
+      await this.#append({ schemaVersion: SCHEMA_VERSION, op: 'put', key: normalizedKey, value: { status: 'pending', fingerprint, response: null }, createdAt: record.createdAt, expiresAt: record.expiresAt });
       this.#records.set(normalizedKey, record);
       this.#enforceBound();
       return freeze({ state: 'claimed', record });

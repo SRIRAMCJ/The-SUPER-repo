@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { RuntimeRequestIdentity } from './request-identity.js';
 import { RuntimeDistributedRateLimiter } from './distributed-rate-limiter.js';
 
-const SCHEMA_VERSION = '0.2.0';
+const SCHEMA_VERSION = '0.3.0';
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const REPLAYABLE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -74,6 +74,15 @@ export class RuntimeRequestGuard {
     if (idempotencyKey && REPLAYABLE_METHODS.has(method)) {
       const cacheKey = principal + ':' + method + ':' + path + ':' + idempotencyKey;
       const fingerprint = fingerprintRequest(request);
+      if (this.idempotencyStore?.claim) {
+        let claim;
+        try { claim = await this.idempotencyStore.claim(cacheKey, fingerprint, { expiresAt: now + this.idempotencyTtlMs }); }
+        catch (error) { return denied('IDEMPOTENCY_STORE_UNAVAILABLE', error instanceof Error ? error.message : String(error)); }
+        if (claim.state === 'conflict') return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');
+        if (claim.state === 'replay') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'replay', cacheKey, response: claim.record.response, identity });
+        if (claim.state === 'in_progress') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, claim.record.expiresAt - now) });
+        return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey, fingerprint, identity });
+      }
       const existing = this.idempotencyStore ? await this.idempotencyStore.get(cacheKey) : this.#idempotency.get(cacheKey);
       if (existing && existing.expiresAt > now) {
         if (existing.fingerprint !== fingerprint) return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');

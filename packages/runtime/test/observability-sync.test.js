@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ObservabilitySyncCoordinator } from '../src/index.js';
+import { ObservabilitySyncCoordinator, ObservabilityCheckpointAuthority } from '../src/index.js';
 
 function setup() {
   const source = {
@@ -62,4 +62,27 @@ test('observability sync cancellation and immutable audit history are explicit',
   const history = coordinator.history();
   assert.throws(() => { history.push({}); }, TypeError);
   assert.equal(coordinator.status().state, 'idle');
+});
+
+test('observability sync resumes from checkpoint and advances it only after a complete batch', async () => {
+  const source = {
+    async replaySource({ sourceNodeId, afterSourceSequence, limit }) {
+      return [{ id:'e4', type:'execution.completed', sourceNodeId, sourceSequence:4, sequence:44, fencingToken:7 }].filter(e => e.sourceSequence > afterSourceSequence).slice(0,limit);
+    },
+    snapshot() { return { retainedEvents:1 }; },
+  };
+  const imported = [];
+  const transport = {
+    ingest(events) { imported.push(...events); return events.map(event => ({state:'published',event})); },
+    history() { return imported; },
+    snapshot() { return {nodeId:'sync-node',retainedEvents:imported.length}; },
+  };
+  const checkpoint = new ObservabilityCheckpointAuthority({ idFactory: (()=>{let i=0; return ()=>String(++i);})() });
+  checkpoint.commit({nodeId:'sync-node',sourceNodeId:'source-a',sourceSequence:3,eventSequence:33,fencingToken:7});
+  const coordinator = new ObservabilitySyncCoordinator({store:source,transport,checkpoint,idFactory:()=> 'resume-1'});
+  const result = await coordinator.syncFrom({sourceNodeId:'source-a',limit:10});
+  assert.equal(result.state,'succeeded');
+  assert.equal(result.checkpoint,'committed');
+  assert.equal(checkpoint.get('source-a').sourceSequence,4);
+  assert.equal(imported.length,1);
 });

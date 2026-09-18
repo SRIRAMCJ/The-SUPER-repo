@@ -1,4 +1,5 @@
-const SCHEMA_VERSION = '0.1.0';
+const SCHEMA_VERSION = '0.2.0';
+const CHECKPOINT_VERSION = 1;
 
 export class ObservabilityCheckpointAuthority {
   #clock;
@@ -19,14 +20,17 @@ export class ObservabilityCheckpointAuthority {
     if (this.#store) for (const checkpoint of this.#store.replay()) this.#checkpoints.set(checkpoint.sourceNodeId, freeze(checkpoint));
   }
 
-  commit({ nodeId, sourceNodeId, sourceSequence, fencingToken, eventSequence, digest = null } = {}) {
+  commit({ nodeId, sourceNodeId, sourceSequence, fencingToken, eventSequence, digest = null, expectedVersion = null } = {}) {
     validateNode(nodeId);
     validateNode(sourceNodeId);
     validatePositive(sourceSequence, 'sourceSequence');
     validatePositive(eventSequence, 'eventSequence');
     validateNonNegative(fencingToken, 'fencingToken');
     if (digest !== null && (typeof digest !== 'string' || digest.length > 256)) throw new TypeError('digest must be a string of <= 256 characters or null');
+    if (expectedVersion !== null && (!Number.isInteger(expectedVersion) || expectedVersion < 0)) throw new TypeError('expectedVersion must be a non-negative integer or null');
     const current = this.#checkpoints.get(sourceNodeId);
+    const currentVersion = current?.version ?? 0;
+    if (expectedVersion !== null && expectedVersion !== currentVersion) return this.#result('version_conflict', { sourceNodeId, expectedVersion, currentVersion, checkpoint: current ?? null });
     if (current) {
       if (fencingToken < current.fencingToken) return this.#result('stale_fence', { sourceNodeId, fencingToken, currentFencingToken: current.fencingToken });
       if (sourceSequence < current.sourceSequence) return this.#result('stale', { sourceNodeId, sourceSequence, currentSourceSequence: current.sourceSequence });
@@ -35,6 +39,7 @@ export class ObservabilityCheckpointAuthority {
     }
     const checkpoint = freeze({
       schemaVersion: SCHEMA_VERSION,
+      version: currentVersion + CHECKPOINT_VERSION,
       checkpointId: this.#idFactory(),
       nodeId,
       sourceNodeId,
@@ -98,4 +103,4 @@ function clone(value) { return structuredClone(value); }
 function freeze(value) { return deepFreeze(structuredClone(value)); }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }
 
-export { SCHEMA_VERSION as OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION };
+export { SCHEMA_VERSION as OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_VERSION as OBSERVABILITY_CHECKPOINT_VERSION };

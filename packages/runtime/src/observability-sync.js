@@ -15,6 +15,7 @@ export class ObservabilitySyncCoordinator {
   #idFactory;
   #maxHistory;
   #checkpoint;
+  #sourceSequences = new Map();
   #inflight = new Map();
   #history = [];
 
@@ -54,9 +55,8 @@ export class ObservabilitySyncCoordinator {
         ? await this.#store.replaySource({ sourceNodeId, afterSourceSequence, limit })
         : (await this.#store.replay({ afterSequence: 0, limit: Math.max(limit * 2, limit) })).filter((event) => event.sourceNodeId === sourceNodeId && event.sourceSequence > afterSourceSequence).slice(0, limit);
       if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.cancelled, imported: 0, rejected: 0, gap: null });
-      const gap = sourceEvents.length && sourceEvents[0].sourceSequence > afterSourceSequence + 1
-        ? { from: afterSourceSequence + 1, to: sourceEvents[0].sourceSequence - 1 }
-        : null;
+      const gap = detectGap(sourceEvents, afterSourceSequence);
+      if (gap) return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.partial, imported: 0, rejected: 0, gap, retryAfter: { fromSourceSequence: gap.from, toSourceSequence: gap.to } });
       const results = this.#transport.ingest(sourceEvents);
       const imported = results.filter((result) => result.state === 'published' || result.state === 'duplicate').length;
       const rejected = results.length - imported;
@@ -111,6 +111,15 @@ export class ObservabilitySyncCoordinator {
 function validateNode(value) { if (typeof value !== 'string' || !value.trim()) throw new TypeError('sourceNodeId must be a non-empty string'); }
 function validateCursor(value) { if (!Number.isInteger(value) || value < 0) throw new TypeError('afterSourceSequence must be a non-negative integer'); }
 function validateLimit(value) { if (!Number.isInteger(value) || value < 1) throw new TypeError('limit must be a positive integer'); }
+function detectGap(events, afterSourceSequence) {
+  if (!events.length) return null;
+  let expected = afterSourceSequence + 1;
+  for (const event of events) {
+    if (event.sourceSequence > expected) return { from: expected, to: event.sourceSequence - 1 };
+    expected = event.sourceSequence + 1;
+  }
+  return null;
+}
 function normalizeError(error) { return { code: typeof error?.code === 'string' ? error.code : 'OBSERVABILITY_SYNC_FAILED', message: error instanceof Error ? error.message : String(error) }; }
 function freeze(value) { return deepFreeze(structuredClone(value)); }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }

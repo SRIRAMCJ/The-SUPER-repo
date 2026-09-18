@@ -84,3 +84,26 @@ test('history is bounded and immutable', async () => {
   assert.equal(coordinator.history().length, 2);
   assert.equal(Object.isFrozen(coordinator.history()), true);
 });
+
+
+test('recovery lease fences concurrent coordinators and propagates fencing metadata', async () => {
+  const now = new Date('2026-09-18T05:00:00.000Z');
+  const states = [{ transactionId: 't1', status: 'active', updatedAt: '2020-01-01T00:00:00.000Z' }];
+  const lease = new (await import('../src/recovery-lease.js')).RecoveryLeaseKernel({ clock: () => now, leaseTtlMs: 1000 });
+  let seen;
+  const transaction = { recover: async (_id, context) => { seen = context; return { status: 'rolled_back' }; } };
+  const coordinator = new ExecutionRecoveryCoordinator({ durableState: durable(states), transaction, recoveryLease: lease, ownerId: 'owner-a', nodeId: 'node-a', clock: () => now, staleAfterMs: 0 });
+  const result = await coordinator.recover({ reason: 'distributed_restart' });
+  assert.equal(result.status, 'succeeded'); assert.equal(seen.fencingToken, 1); assert.equal(seen.recoveryOwnerId, 'owner-a');
+  assert.equal(lease.get('t1').state, 'released');
+});
+
+test('lease denial blocks one recovery without invoking transaction', async () => {
+  const now = new Date('2026-09-18T05:00:00.000Z');
+  const lease = new (await import('../src/recovery-lease.js')).RecoveryLeaseKernel({ clock: () => now, leaseTtlMs: 1000 });
+  lease.acquire({ executionId: 't1', ownerId: 'other', nodeId: 'node-b' });
+  let calls = 0;
+  const coordinator = new ExecutionRecoveryCoordinator({ durableState: durable([{ transactionId: 't1', status: 'active', updatedAt: '2020-01-01T00:00:00.000Z' }]), transaction: { recover: async () => { calls++; } }, recoveryLease: lease, ownerId: 'owner-a', nodeId: 'node-a', clock: () => now, staleAfterMs: 0 });
+  const result = await coordinator.recover();
+  assert.equal(calls, 0); assert.equal(result.results[0].status, 'failed'); assert.equal(result.results[0].error.code, 'RECOVERY_LEASE_HELD');
+});

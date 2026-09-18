@@ -58,3 +58,4 @@ export { TeamBuilder } from './team-builder.js';
 export { RuntimeSupervisorKernel, RUNTIME_SUPERVISOR_SCHEMA_VERSION, RUNTIME_SUPERVISOR_STATES } from './supervisor.js';
 export { RuntimePolicyEnforcementKernel, RUNTIME_POLICY_ENFORCEMENT_SCHEMA_VERSION, RUNTIME_POLICY_DECISIONS } from './policy-enforcement.js';
 export { RuntimeExecutionTransactionKernel, RUNTIME_EXECUTION_TRANSACTION_SCHEMA_VERSION, RUNTIME_EXECUTION_TRANSACTION_STATES } from './execution-transaction.js';
+export { ExecutionJournal, DurableExecutionState, EXECUTION_JOURNAL_SCHEMA_VERSION } from './execution-journal.js';

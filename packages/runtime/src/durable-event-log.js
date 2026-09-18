@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { ObservabilityIntegrityKernel } from './observability-integrity.js';
 
 const SCHEMA_VERSION = '0.1.0';
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
@@ -82,6 +83,7 @@ export class DurableEventLog {
         ...(event.executionId ? { executionId: event.executionId } : {}),
         ...(event.capabilityId ? { capabilityId: event.capabilityId } : {}),
         ...(event.status ? { status: event.status } : {}),
+        ...(event.metadata !== undefined ? { metadata: structuredClone(event.metadata) } : {}),
       });
       await this.#appendRecord({ op: 'append', event: normalized });
       this.#apply(normalized);
@@ -122,6 +124,40 @@ export class DurableEventLog {
   async replay({ afterSequence = 0, limit = this.#maxEvents } = {}) {
     await this.#reload();
     return this.history({ afterSequence, limit });
+  }
+
+  async digestSourceRange({ sourceNodeId, fromSourceSequence, toSourceSequence } = {}) {
+    this.#requireInitialized();
+    validateNode(sourceNodeId);
+    validateRange(fromSourceSequence, toSourceSequence);
+    const size = toSourceSequence - fromSourceSequence + 1;
+    if (size > this.#maxEvents) {
+      return freeze({
+        valid: false,
+        code: 'INTEGRITY_RANGE_EXCEEDS_RETENTION',
+        sourceNodeId,
+        fromSourceSequence,
+        toSourceSequence,
+        retainedEvents: this.#events.length,
+      });
+    }
+    await this.#reload();
+    const events = this.#events
+      .filter((event) => event.sourceNodeId === sourceNodeId
+        && event.sourceSequence >= fromSourceSequence
+        && event.sourceSequence <= toSourceSequence)
+      .sort((a, b) => a.sourceSequence - b.sourceSequence);
+    const result = ObservabilityIntegrityKernel.verifyRange(events, {
+      sourceNodeId,
+      fromSourceSequence,
+      toSourceSequence,
+    });
+    return freeze({
+      ...result,
+      sourceNodeId,
+      fromSourceSequence,
+      toSourceSequence,
+    });
   }
 
   get(eventId) {
@@ -309,6 +345,11 @@ export class DurableEventLog {
 function validateEvent(event) {
   if (!event || typeof event !== 'object' || Array.isArray(event)) throw new TypeError('event must be an object');
   if (typeof event.type !== 'string' || !event.type.trim()) throw new TypeError('event.type must be a non-empty string');
+}
+function validateRange(from, to) {
+  if (!Number.isInteger(from) || from < 1 || !Number.isInteger(to) || to < from) {
+    throw new TypeError('range must contain positive integer bounds');
+  }
 }
 function validateNode(value) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError('sourceNodeId must be a non-empty string');

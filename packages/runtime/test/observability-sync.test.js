@@ -86,3 +86,34 @@ test('observability sync resumes from checkpoint and advances it only after a co
   assert.equal(checkpoint.get('source-a').sourceSequence,4);
   assert.equal(imported.length,1);
 });
+
+
+test('observability sync binds checkpoints to a verified durable source range digest', async () => {
+  const source = {
+    async replaySource({ sourceNodeId, afterSourceSequence, limit }) {
+      return [{ id:'e4', type:'execution.completed', sourceNodeId, sourceSequence:4, sequence:44, fencingToken:7 }].filter(e => e.sourceSequence > afterSourceSequence).slice(0, limit);
+    },
+    async digestSourceRange({ sourceNodeId, fromSourceSequence, toSourceSequence }) {
+      assert.equal(sourceNodeId, 'source-a');
+      assert.equal(fromSourceSequence, 4);
+      assert.equal(toSourceSequence, 4);
+      return { valid:true, digest:'a'.repeat(64), fromSourceSequence, toSourceSequence };
+    },
+    snapshot() { return { retainedEvents:1 }; },
+  };
+  const transport = {
+    ingest(events) { return events.map(event => ({state:'published',event})); },
+    history() { return []; },
+    snapshot() { return {nodeId:'sync-node'}; },
+  };
+  const checkpoint = new ObservabilityCheckpointAuthority({ idFactory:(()=>{let i=0;return()=>String(++i);})() });
+  checkpoint.commit({nodeId:'sync-node',sourceNodeId:'source-a',sourceSequence:3,eventSequence:33,fencingToken:7});
+  const coordinator = new ObservabilitySyncCoordinator({store:source,transport,checkpoint,idFactory:()=> 'integrity-sync'});
+  const result = await coordinator.syncFrom({sourceNodeId:'source-a',limit:10});
+  assert.equal(result.state,'succeeded');
+  assert.equal(result.integrity.digest,'a'.repeat(64));
+  const saved = checkpoint.get('source-a');
+  assert.equal(saved.digest,'a'.repeat(64));
+  assert.equal(saved.digestFromSourceSequence,4);
+  assert.equal(saved.digestToSourceSequence,4);
+});

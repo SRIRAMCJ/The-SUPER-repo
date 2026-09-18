@@ -16,10 +16,16 @@ describe('ExecutionSandbox', () => {
     expect(result.stdout).toBe('ok');
   });
 
-  it('rejects inherited environment unless explicitly requested', async () => {
+  it('does not inherit arbitrary host environment values by default', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-3' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.SUPER_SECRET ?? "missing")'], { env: { SUPER_SECRET: 'visible' } });
     expect(result.stdout).toBe('visible');
+  });
+
+  it('does not inherit NODE_OPTIONS through the safe environment', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-3b' });
+    const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.NODE_OPTIONS ?? "missing")']);
+    expect(result.stdout).toBe('missing');
   });
 
   it('enforces output limits and terminates noisy processes', async () => {
@@ -44,6 +50,13 @@ describe('ExecutionSandbox', () => {
     const result = await sandbox.execute(node, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 20 });
     expect(result.status).toBe('timed_out');
     expect(result.error.code).toBe('TIMED_OUT');
+  });
+
+  it('reports a process that independently terminates with SIGTERM as failed', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-6b' });
+    const result = await sandbox.execute(node, ['-e', 'process.kill(process.pid, "SIGTERM")']);
+    expect(result.status).toBe('failed');
+    expect(result.error.code).toBe('PROCESS_EXIT');
   });
 
   it('fails closed for unsupported network isolation', async () => {

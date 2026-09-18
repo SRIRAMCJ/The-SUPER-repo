@@ -3,16 +3,18 @@ const SCHEMA_VERSION = '0.1.0';
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'rejected']);
 
 export class AgentExecutionOrchestrator {
-  constructor({ admission, reflection = null, recovery = null, events = null, clock = () => new Date(), maxRecoveryAttempts = 0, idFactory = defaultSessionId } = {}) {
+  constructor({ admission, runtimeAdmission = null, reflection = null, recovery = null, events = null, clock = () => new Date(), maxRecoveryAttempts = 0, idFactory = defaultSessionId } = {}) {
     if (!admission || typeof admission.admit !== 'function' || typeof admission.execute !== 'function') {
       throw new TypeError('AgentExecutionOrchestrator requires AgentExecutionAdmission');
     }
+    if (runtimeAdmission && typeof runtimeAdmission.execute !== 'function') throw new TypeError('runtimeAdmission must expose execute()');
     if (reflection && typeof reflection.evaluate !== 'function') throw new TypeError('reflection must expose evaluate()');
     if (recovery && typeof recovery.recover !== 'function') throw new TypeError('recovery must expose recover()');
     if (events && typeof events.emit !== 'function') throw new TypeError('events must expose emit()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecoveryAttempts) || maxRecoveryAttempts < 0) throw new TypeError('maxRecoveryAttempts must be a non-negative integer');
     this.admission = admission;
+    this.runtimeAdmission = runtimeAdmission;
     this.reflection = reflection;
     this.recovery = recovery;
     this.events = events;
@@ -113,7 +115,19 @@ export class AgentExecutionOrchestrator {
     this.#transition(executionId, 'running', { attempt: session.attempt });
     this.#emit({ type: 'agent.orchestration.execution.started', executionId, planId: plan.planId, status: 'running', data: { attempt: session.attempt } });
     try {
-      return normalizeExecutionResult(await this.admission.execute(plan, input, { ...context, executionId, correlationId }, options), executionId);
+      const execute = () => this.admission.execute(plan, input, { ...context, executionId, correlationId }, options);
+      if (!this.runtimeAdmission) return normalizeExecutionResult(await execute(), executionId);
+      const runtimeResult = await this.runtimeAdmission.execute({
+        executionId,
+        resources: options.resourceRequest ?? context.resourceRequest ?? {},
+        metadata: options.admissionMetadata ?? context.admissionMetadata ?? { planId: plan.planId, correlationId },
+        signal: context.signal,
+        handler: async () => execute()
+      });
+      if (runtimeResult.status !== 'succeeded') {
+        return normalizeExecutionResult({ executionId, status: runtimeResult.status, error: runtimeResult.error, result: runtimeResult.result }, executionId);
+      }
+      return normalizeExecutionResult(runtimeResult.result, executionId);
     } catch (error) {
       return { executionId, status: 'failed', error: normalizeError(error) };
     }

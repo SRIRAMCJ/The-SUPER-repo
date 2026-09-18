@@ -33,6 +33,7 @@ export class ControlPlaneGateway {
       if (method === 'GET' && route === '/executions') return ok(this.controlPlane.getExecutions(executionFilter(parsed.searchParams)));
       if (method === 'GET' && route === '/evolution') return ok(await this.controlPlane.getEvolution());
       if (method === 'GET' && route === '/recovery') return ok(await this.controlPlane.getRecovery());
+      if (method === 'GET' && route === '/supervisor') return ok(await this.controlPlane.getSupervisorHealth({ correlationId: parsed.searchParams.get('correlationId') }));
       if (method === 'GET' && route === '/snapshot') return ok(await this.controlPlane.snapshot());
       if (method === 'GET' && route === '/operations') return ok(this.operations.getOperations());
       if (method === 'GET' && route === '/diagnostics') return ok(await this.operations.diagnostics());

@@ -19,6 +19,7 @@ export class RuntimeOperations {
       operation('runtime.executions', 'GET', '/executions', 'read', 'Inspect execution lifecycle state'),
       operation('runtime.evolution', 'GET', '/evolution', 'read', 'Inspect evolution-control state'),
       operation('runtime.recovery', 'GET', '/recovery', 'read', 'Inspect runtime recovery state'),
+      operation('runtime.supervisor', 'GET', '/supervisor', 'read', 'Inspect aggregated runtime component health'),
       operation('runtime.snapshot', 'GET', '/snapshot', 'read', 'Capture a unified runtime snapshot'),
       operation('runtime.diagnostics', 'GET', '/diagnostics', 'read', 'Run deterministic runtime diagnostics'),
       operation('runtime.cancel', 'POST', '/executions/:executionId/cancel', 'control', 'Request cancellation of an execution'),
@@ -36,6 +37,7 @@ export class RuntimeOperations {
     checkComponent(checks, 'evolution-control', cp.evolutionControlPlane, ['list'], true);
     checkComponent(checks, 'execution-engine', cp.executionEngine, ['cancel'], true);
     checkComponent(checks, 'recovery-kernel', cp.recoveryKernel, ['recover', 'snapshot'], true);
+    checkComponent(checks, 'supervisor', cp.supervisor, ['health', 'snapshot'], true);
     try { const metrics = cp.observability.getMetrics(); const eventCount = cp.observability.getEvents().length; const traceCount = cp.observability.getTraces().length; add('observability.retention', 'info', 'pass', 'Bounded observability data is readable', { retainedEvents: eventCount, retainedTraces: traceCount, activeExecutions: metrics.activeExecutions }); } catch (error) { add('observability.retention', 'error', 'fail', 'Observability retention could not be inspected', { error: errorMessage(error) }); }
     const failures = checks.filter((check) => check.status === 'fail');
     const warnings = checks.filter((check) => check.status === 'warning');

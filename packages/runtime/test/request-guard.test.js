@@ -52,10 +52,10 @@ test('request guard isolates principals and retains bounded idempotency records'
   assert.equal(snapshot.activeRateWindows, 2);
 });
 
-test('request guard produces stable request fingerprints independent of header identity', () => {
+test('request guard fingerprints the normalized request path', () => {
   const guard = new RuntimeRequestGuard();
   const first = guard.admit({ method: 'POST', path: '/commands?x=1', clientKey: 'a', idempotencyKey: 'k', body: { b: 2 } });
   guard.complete(first, { status: 201 });
   const second = guard.admit({ method: 'POST', path: '/commands?x=2', clientKey: 'a', idempotencyKey: 'k', body: { b: 2 } });
-  assert.equal(second.decision, 'accepted');
+  assert.equal(second.decision, 'replay');
 });

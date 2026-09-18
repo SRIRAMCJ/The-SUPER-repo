@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = '0.1.0';
+const SCHEMA_VERSION = '0.2.0';
 const SYNC_STATES = Object.freeze({
   idle: 'idle',
   syncing: 'syncing',
@@ -63,18 +63,26 @@ export class ObservabilitySyncCoordinator {
       let checkpointResult = null;
       if (!gap && sourceEvents.length && this.#checkpoint) {
         const last = sourceEvents[sourceEvents.length - 1];
+        let integrity = null;
+        if (typeof this.#store.digestSourceRange === 'function') {
+          integrity = await this.#store.digestSourceRange({ sourceNodeId, fromSourceSequence: afterSourceSequence + 1, toSourceSequence: last.sourceSequence });
+          if (!integrity.valid) return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.failed, imported, rejected, gap: null, error: { code: integrity.code, message: 'checkpoint integrity range could not be derived from durable events' } });
+        }
         checkpointResult = this.#checkpoint.commit({
           nodeId: this.#transport.snapshot().nodeId ?? 'sync',
           sourceNodeId,
           sourceSequence: last.sourceSequence,
           eventSequence: last.sequence ?? last.sourceSequence,
           fencingToken: last.fencingToken ?? 0,
+          digest: integrity?.digest ?? null,
+          digestFromSourceSequence: integrity?.fromSourceSequence ?? null,
+          digestToSourceSequence: integrity?.toSourceSequence ?? null,
         });
         if (!['committed', 'duplicate'].includes(checkpointResult.state)) {
           return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.failed, imported, rejected, gap: null, checkpoint: checkpointResult.state, error: { code: 'CHECKPOINT_COMMIT_REJECTED', message: 'checkpoint advancement was rejected' } });
         }
       }
-      return this.#finish({ requestId, sourceNodeId, state: gap ? SYNC_STATES.partial : SYNC_STATES.succeeded, imported, rejected, gap, checkpoint: checkpointResult?.state ?? null });
+      return this.#finish({ requestId, sourceNodeId, state: gap ? SYNC_STATES.partial : SYNC_STATES.succeeded, imported, rejected, gap, checkpoint: checkpointResult?.state ?? null, integrity: integrity ? { digest: integrity.digest, fromSourceSequence: integrity.fromSourceSequence, toSourceSequence: integrity.toSourceSequence } : null });
     } catch (error) {
       if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.cancelled, imported: 0, rejected: 0, gap: null });
       return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.failed, imported: 0, rejected: 0, gap: null, error: normalizeError(error) });

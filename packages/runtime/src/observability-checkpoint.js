@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = '0.2.0';
+const SCHEMA_VERSION = '0.3.0';
 const CHECKPOINT_VERSION = 1;
 
 export class ObservabilityCheckpointAuthority {
@@ -20,13 +20,15 @@ export class ObservabilityCheckpointAuthority {
     if (this.#store) for (const checkpoint of this.#store.replay()) this.#checkpoints.set(checkpoint.sourceNodeId, freeze(checkpoint));
   }
 
-  commit({ nodeId, sourceNodeId, sourceSequence, fencingToken, eventSequence, digest = null, expectedVersion = null } = {}) {
+  commit({ nodeId, sourceNodeId, sourceSequence, fencingToken, eventSequence, digest = null, digestFromSourceSequence = null, digestToSourceSequence = null, expectedVersion = null } = {}) {
     validateNode(nodeId);
     validateNode(sourceNodeId);
     validatePositive(sourceSequence, 'sourceSequence');
     validatePositive(eventSequence, 'eventSequence');
     validateNonNegative(fencingToken, 'fencingToken');
-    if (digest !== null && (typeof digest !== 'string' || digest.length > 256)) throw new TypeError('digest must be a string of <= 256 characters or null');
+    if (digest !== null && (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest))) throw new TypeError('digest must be a SHA-256 hex digest or null');
+    if (digest === null && (digestFromSourceSequence !== null || digestToSourceSequence !== null)) throw new TypeError('digest range requires digest');
+    if (digest !== null && ((digestFromSourceSequence !== null && (!Number.isInteger(digestFromSourceSequence) || digestFromSourceSequence < 1)) || (digestToSourceSequence !== null && (!Number.isInteger(digestToSourceSequence) || digestToSourceSequence < 1)) || (digestFromSourceSequence !== null && digestToSourceSequence > digestToSourceSequence))) throw new TypeError('digest range must contain positive integer bounds');
     if (expectedVersion !== null && (!Number.isInteger(expectedVersion) || expectedVersion < 0)) throw new TypeError('expectedVersion must be a non-negative integer or null');
     const current = this.#checkpoints.get(sourceNodeId);
     const currentVersion = current?.version ?? 0;
@@ -47,6 +49,7 @@ export class ObservabilityCheckpointAuthority {
       eventSequence,
       fencingToken,
       digest,
+      ...(digest !== null ? { digestFromSourceSequence, digestToSourceSequence } : {}),
       committedAt: this.#clock().toISOString(),
     });
     if (this.#store) {

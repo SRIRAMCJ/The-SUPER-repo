@@ -90,7 +90,7 @@ export class ObservabilitySyncCoordinator {
       history: this.#history,
       store: this.#store.snapshot(),
       transport: this.#transport.snapshot(),
-      checkpoint: this.#checkpoint?.get ? this.#checkpoint.get('') : null,
+      checkpoint: this.#checkpoint?.snapshot ? this.#checkpoint.snapshot() : null,
     });
   }
 

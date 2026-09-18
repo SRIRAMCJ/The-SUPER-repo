@@ -128,3 +128,22 @@ test('recover rolls an interrupted active transaction back and preserves immutab
   assert.equal(Object.isFrozen(kernel.history()[0]), true);
   assert.ok(kernel.history().length <= 4);
 });
+
+test('transaction state survives kernel restart through durable journal', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'super-tx-durable-'));
+  const { ExecutionJournal, DurableExecutionState } = await import('../src/execution-journal.js');
+  const journal = new ExecutionJournal({ filePath: path.join(dir, 'journal.jsonl') });
+  const durableState = new DurableExecutionState({ journal });
+  const firstAdmission = makeAdmission();
+  const firstKernel = new RuntimeExecutionTransactionKernel({ admission: firstAdmission, durableState, idFactory: (() => { let n = 0; return p => `${p}-${++n}`; })() });
+  const tx = await firstKernel.execute({ executionId: 'e-durable', idempotencyKey: 'durable-key', handler: async () => ({ persisted: true }) });
+  assert.equal(tx.status, 'committed');
+
+  const secondKernel = new RuntimeExecutionTransactionKernel({ admission: makeAdmission(), durableState });
+  const restored = await secondKernel.recoverDurable();
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].status, 'committed');
+  const replay = await secondKernel.execute({ executionId: 'another-execution', idempotencyKey: 'durable-key', handler: async () => ({ persisted: false }) });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.result, { persisted: true });
+});

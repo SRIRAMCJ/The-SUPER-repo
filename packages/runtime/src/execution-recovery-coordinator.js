@@ -5,15 +5,17 @@ export class ExecutionRecoveryCoordinator {
   #attempts = new Map();
   #history = [];
 
-  constructor({ durableState, transaction, supervisor = null, clock = () => new Date(), idFactory = defaultId, maxAttempts = 3, maxHistory = 256, staleAfterMs = 300_000 } = {}) {
+  constructor({ durableState, transaction, supervisor = null, recoveryLease = null, ownerId = null, nodeId = null, clock = () => new Date(), idFactory = defaultId, maxAttempts = 3, maxHistory = 256, staleAfterMs = 300_000 } = {}) {
     if (!durableState || typeof durableState.load !== 'function') throw new TypeError('durableState must expose load()');
     if (!transaction || typeof transaction.recover !== 'function') throw new TypeError('transaction must expose recover()');
     if (supervisor && typeof supervisor.health !== 'function') throw new TypeError('supervisor must expose health()');
+    if (recoveryLease && (typeof recoveryLease.acquire !== 'function' || typeof recoveryLease.release !== 'function')) throw new TypeError('recoveryLease must expose acquire() and release()');
+    if (recoveryLease && (typeof ownerId !== 'string' || !ownerId || typeof nodeId !== 'string' || !nodeId)) throw new TypeError('ownerId and nodeId are required when recoveryLease is configured');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new TypeError('maxAttempts must be a positive integer');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     if (!Number.isInteger(staleAfterMs) || staleAfterMs < 0) throw new TypeError('staleAfterMs must be a non-negative integer');
-    this.durableState = durableState; this.transaction = transaction; this.supervisor = supervisor;
+    this.durableState = durableState; this.transaction = transaction; this.supervisor = supervisor; this.recoveryLease = recoveryLease; this.ownerId = ownerId; this.nodeId = nodeId;
     this.clock = clock; this.idFactory = idFactory; this.maxAttempts = maxAttempts; this.maxHistory = maxHistory; this.staleAfterMs = staleAfterMs;
   }
 
@@ -35,14 +37,23 @@ export class ExecutionRecoveryCoordinator {
         this.#record({ event: 'recovery_blocked', transactionId: state.transactionId, attempt, reason: 'recovery_attempt_limit' });
         continue;
       }
+      let lease = null;
       try {
-        const recovered = await this.transaction.recover(state.transactionId, { signal });
+        if (this.recoveryLease) {
+          lease = this.recoveryLease.acquire({ executionId: state.transactionId, ownerId: this.ownerId, nodeId: this.nodeId, signal, reason });
+        }
+        const recovered = await this.transaction.recover(state.transactionId, { signal, fencingToken: lease?.fencingToken, recoveryOwnerId: this.ownerId, recoveryNodeId: this.nodeId });
         results.push({ transactionId: state.transactionId, status: recovered.status, attempt, recovered });
         this.#record({ event: 'recovery_completed', transactionId: state.transactionId, attempt, status: recovered.status });
       } catch (error) {
         const normalized = normalizeError(error, 'RECOVERY_FAILED');
         results.push({ transactionId: state.transactionId, status: 'failed', attempt, error: normalized });
         this.#record({ event: 'recovery_failed', transactionId: state.transactionId, attempt, error: normalized });
+      } finally {
+        if (lease) {
+          try { this.recoveryLease.release({ executionId: state.transactionId, ownerId: this.ownerId, nodeId: this.nodeId, fencingToken: lease.fencingToken }); }
+          catch (error) { this.#record({ event: 'recovery_lease_release_failed', transactionId: state.transactionId, attempt, error: normalizeError(error, 'RECOVERY_LEASE_RELEASE_FAILED') }); }
+        }
       }
     }
     const status = signal?.aborted ? 'blocked' : results.some(item => item.status === 'failed' || item.status === 'rollback_failed') ? 'failed' : 'succeeded';
@@ -88,3 +99,26 @@ function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.i
 function defaultId(prefix) { return `${prefix}-${Date.now().toString(36)}`; }
 
 export { SCHEMA_VERSION as EXECUTION_RECOVERY_COORDINATOR_SCHEMA_VERSION, STATES as EXECUTION_RECOVERY_COORDINATOR_STATES };
+
+
+test('recovery lease fences concurrent coordinators and propagates fencing metadata', async () => {
+  const now = new Date('2026-09-18T05:00:00.000Z');
+  const states = [{ transactionId: 't1', status: 'active', updatedAt: '2020-01-01T00:00:00.000Z' }];
+  const lease = new (await import('../src/recovery-lease.js')).RecoveryLeaseKernel({ clock: () => now, leaseTtlMs: 1000 });
+  let seen;
+  const transaction = { recover: async (_id, context) => { seen = context; return { status: 'rolled_back' }; } };
+  const coordinator = new ExecutionRecoveryCoordinator({ durableState: durable(states), transaction, recoveryLease: lease, ownerId: 'owner-a', nodeId: 'node-a', clock: () => now, staleAfterMs: 0 });
+  const result = await coordinator.recover({ reason: 'distributed_restart' });
+  assert.equal(result.status, 'succeeded'); assert.equal(seen.fencingToken, 1); assert.equal(seen.recoveryOwnerId, 'owner-a');
+  assert.equal(lease.get('t1').state, 'released');
+});
+
+test('lease denial blocks one recovery without invoking transaction', async () => {
+  const now = new Date('2026-09-18T05:00:00.000Z');
+  const lease = new (await import('../src/recovery-lease.js')).RecoveryLeaseKernel({ clock: () => now, leaseTtlMs: 1000 });
+  lease.acquire({ executionId: 't1', ownerId: 'other', nodeId: 'node-b' });
+  let calls = 0;
+  const coordinator = new ExecutionRecoveryCoordinator({ durableState: durable([{ transactionId: 't1', status: 'active', updatedAt: '2020-01-01T00:00:00.000Z' }]), transaction: { recover: async () => { calls++; } }, recoveryLease: lease, ownerId: 'owner-a', nodeId: 'node-a', clock: () => now, staleAfterMs: 0 });
+  const result = await coordinator.recover();
+  assert.equal(calls, 0); assert.equal(result.results[0].status, 'failed'); assert.equal(result.results[0].error.code, 'RECOVERY_LEASE_HELD');
+});

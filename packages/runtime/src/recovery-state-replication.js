@@ -57,6 +57,23 @@ export class RecoveryStateReplicator {
 
   get(transactionId) { return clone(this.latest.get(transactionId) ?? null); }
   list() { return [...this.latest.values()].map(clone); }
+  async merge(records = []) {
+    if (!Array.isArray(records)) throw new TypeError('records must be an array');
+    const applied = [], duplicates = [], rejected = [];
+    for (const record of records) {
+      try {
+        const outcome = await this.apply(record);
+        (outcome.duplicate ? duplicates : applied).push(outcome.record);
+      } catch (error) {
+        rejected.push({ record: clone(record), error: normalizeError(error) });
+      }
+    }
+    return freeze({ applied, duplicates, rejected });
+  }
+  async syncFrom(source) {
+    if (!source || typeof source.list !== 'function') throw new TypeError('source must expose list()');
+    return this.merge(await source.list());
+  }
   snapshot() { return freeze({ schemaVersion: SCHEMA_VERSION, type: 'recovery-state-replicator', records: this.list() }); }
 
   validate(record) {
@@ -126,6 +143,7 @@ export class RecoveryStateReplicator {
 function isTerminal(state) { return state === 'succeeded' || state === 'failed' || state === 'cancelled' || state === 'blocked'; }
 function sameIdentity(a, b) { return a.recordId === b.recordId && a.ownerId === b.ownerId && a.nodeId === b.nodeId && a.fencingToken === b.fencingToken && a.state === b.state; }
 function recoveryError(code, message) { return Object.assign(new Error(message), { code, retryable: false }); }
+function normalizeError(error) { return { code: error?.code ?? 'RECOVERY_STATE_SYNC_FAILED', message: error instanceof Error ? error.message : String(error), retryable: Boolean(error?.retryable) }; }
 function clone(value) { return value == null ? value : structuredClone(value); }
 function freeze(value) { return deepFreeze(structuredClone(value)); }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }

@@ -28,7 +28,7 @@ export class ControlPlaneGateway {
     const rawPath = String(request.path ?? '/');
     const parsed = new URL(rawPath, 'http://super.local');
     const route = parsed.pathname.replace(/\/+$/, '') || '/';
-    const admission = this.requestGuard.admit(request);
+    const admission = await this.requestGuard.admit(request);
     if (admission.decision === 'denied') return failure(admission.error.code === 'RATE_LIMITED' ? 429 : admission.error.code === 'BODY_TOO_LARGE' ? 413 : 400, admission.error.code, admission.error.message, admission.retryAfterMs);
     if (admission.decision === 'replay') return admission.response;
     let authorized = false;

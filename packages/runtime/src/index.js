@@ -35,6 +35,7 @@ export { ObservabilitySyncCoordinator, OBSERVABILITY_SYNC_SCHEMA_VERSION, OBSERV
 export { ObservabilityCheckpointAuthority, OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './observability-checkpoint.js';
 export { DurableObservabilityCheckpointStore, DURABLE_OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './durable-observability-checkpoint.js';
 export { ObservabilityGapRepairCoordinator, OBSERVABILITY_GAP_REPAIR_SCHEMA_VERSION, OBSERVABILITY_GAP_REPAIR_STATES } from './observability-gap-repair.js';
+export { ObservabilityConvergenceKernel, OBSERVABILITY_CONVERGENCE_SCHEMA_VERSION, OBSERVABILITY_CONVERGENCE_STATES } from './observability-convergence.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

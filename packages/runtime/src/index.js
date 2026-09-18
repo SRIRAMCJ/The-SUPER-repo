@@ -34,6 +34,7 @@ export { DurableEventLog, DURABLE_EVENT_LOG_SCHEMA_VERSION, DURABLE_EVENT_LOG_TE
 export { ObservabilitySyncCoordinator, OBSERVABILITY_SYNC_SCHEMA_VERSION, OBSERVABILITY_SYNC_STATES } from './observability-sync.js';
 export { ObservabilityCheckpointAuthority, OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './observability-checkpoint.js';
 export { DurableObservabilityCheckpointStore, DURABLE_OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './durable-observability-checkpoint.js';
+export { ObservabilityGapRepairCoordinator, OBSERVABILITY_GAP_REPAIR_SCHEMA_VERSION, OBSERVABILITY_GAP_REPAIR_STATES } from './observability-gap-repair.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

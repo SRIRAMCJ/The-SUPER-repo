@@ -2,6 +2,7 @@ const SCHEMA_VERSION = '0.1.0';
 
 export class DistributedEventTransport {
   #sequence = 0;
+  #sourceSequences = new Map();
   #seen = new Set();
   #events = [];
   #subscribers = new Set();
@@ -17,7 +18,7 @@ export class DistributedEventTransport {
     this.maxSeen = maxSeen;
   }
 
-  publish(event, { sequence = null, sourceNodeId = this.nodeId, fencingToken = 0 } = {}) {
+  publish(event, { sourceSequence = null, sourceNodeId = this.nodeId, fencingToken = 0 } = {}) {
     validateEvent(event);
     validateNode(sourceNodeId);
     if (!Number.isInteger(fencingToken) || fencingToken < 0) throw new TypeError('fencingToken must be a non-negative integer');
@@ -25,15 +26,18 @@ export class DistributedEventTransport {
     if (!eventId) throw new TypeError('event.id must be a non-empty string');
     if (this.#seen.has(eventId)) return freeze({ state: 'duplicate', event: this.#events.find((item) => item.id === eventId) ?? null });
 
-    const nextSequence = sequence === null ? this.#sequence + 1 : sequence;
-    if (!Number.isInteger(nextSequence) || nextSequence < 1) throw new TypeError('sequence must be a positive integer');
-    if (nextSequence <= this.#sequence) return freeze({ state: 'stale', sequence: nextSequence });
-    this.#sequence = nextSequence;
+    const previousSourceSequence = this.#sourceSequences.get(sourceNodeId) ?? 0;
+    const nextSourceSequence = sourceSequence === null ? previousSourceSequence + 1 : sourceSequence;
+    if (!Number.isInteger(nextSourceSequence) || nextSourceSequence < 1) throw new TypeError('sourceSequence must be a positive integer');
+    if (nextSourceSequence <= previousSourceSequence) return freeze({ state: 'stale', sourceNodeId, sourceSequence: nextSourceSequence });
+    this.#sourceSequences.set(sourceNodeId, nextSourceSequence);
+
     const normalized = freeze({
       schemaVersion: SCHEMA_VERSION,
       id: eventId,
-      sequence: nextSequence,
+      sequence: ++this.#sequence,
       sourceNodeId,
+      sourceSequence: nextSourceSequence,
       fencingToken,
       timestamp: typeof event.timestamp === 'string' && Number.isFinite(Date.parse(event.timestamp)) ? event.timestamp : this.clock().toISOString(),
       type: event.type,
@@ -58,7 +62,7 @@ export class DistributedEventTransport {
   ingest(events = []) {
     if (!Array.isArray(events)) throw new TypeError('events must be an array');
     const results = [];
-    for (const event of events) results.push(this.publish(event, { sequence: event.sequence, sourceNodeId: event.sourceNodeId, fencingToken: event.fencingToken }));
+    for (const event of events) results.push(this.publish(event, { sourceSequence: event.sourceSequence, sourceNodeId: event.sourceNodeId, fencingToken: event.fencingToken }));
     return Object.freeze(results.map(clone));
   }
 
@@ -69,7 +73,7 @@ export class DistributedEventTransport {
   }
 
   snapshot() {
-    return freeze({ schemaVersion: SCHEMA_VERSION, type: 'distributed-event-transport', nodeId: this.nodeId, sequence: this.#sequence, retainedEvents: this.#events.length, seenEventIds: this.#seen.size });
+    return freeze({ schemaVersion: SCHEMA_VERSION, type: 'distributed-event-transport', nodeId: this.nodeId, sequence: this.#sequence, sourceSequences: Object.fromEntries(this.#sourceSequences), retainedEvents: this.#events.length, seenEventIds: this.#seen.size });
   }
 }
 

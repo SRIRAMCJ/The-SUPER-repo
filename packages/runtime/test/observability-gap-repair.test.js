@@ -75,13 +75,15 @@ test('gap repair deduplicates concurrent identical repairs and honors cancellati
   const { coordinator } = setup(() => new Promise((r) => { resolve = r; }));
   const first = coordinator.repair({ sourceNodeId: 'source-a', fromSourceSequence: 3, toSourceSequence: 3 });
   const second = coordinator.repair({ sourceNodeId: 'source-a', fromSourceSequence: 3, toSourceSequence: 3 });
-  assert.equal(first, second);
+  const resultsPromise = Promise.all([first, second]);
   const controller = new AbortController();
   controller.abort();
   const cancelled = await coordinator.repair({ sourceNodeId: 'source-a', fromSourceSequence: 5, toSourceSequence: 5, signal: controller.signal });
   assert.equal(cancelled.state, 'cancelled');
   resolve([]);
-  await first;
+  const [firstResult, secondResult] = await resultsPromise;
+  assert.equal(firstResult.state, 'failed');
+  assert.equal(secondResult.state, 'failed');
 });
 
 test('gap repair keeps bounded immutable audit history', async () => {

@@ -1,4 +1,5 @@
-const SCHEMA_VERSION = '0.1.0';
+const SCHEMA_VERSION = '0.2.0';
+import { ObservabilityIntegrityKernel } from './observability-integrity.js';
 const CONVERGENCE_STATES = Object.freeze({
   idle: 'idle',
   reconciling: 'reconciling',
@@ -18,13 +19,16 @@ export class ObservabilityConvergenceKernel {
   #history = [];
   #inflight = new Map();
   #state = CONVERGENCE_STATES.idle;
+  #integrity;
 
-  constructor({ local, remote, clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
+  constructor({ local, remote, integrity = ObservabilityIntegrityKernel, clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
     if (!local || typeof local.snapshot !== 'function') throw new TypeError('local must expose snapshot()');
     if (!remote || typeof remote.inspect !== 'function' || typeof remote.repair !== 'function') throw new TypeError('remote must expose inspect() and repair()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
+    if (!integrity || typeof integrity.verifyRange !== 'function') throw new TypeError('integrity must expose verifyRange()');
     this.#local = local;
+    this.#integrity = integrity;
     this.#remote = remote;
     this.#clock = clock;
     this.#idFactory = idFactory;
@@ -63,6 +67,10 @@ export class ObservabilityConvergenceKernel {
       const local = this.#local.snapshot();
       const comparison = compareSnapshots(local, remote);
       if (comparison.state === 'converged') {
+        if (comparison.digest && remote.digest && comparison.digest !== remote.digest) {
+          this.#state = CONVERGENCE_STATES.divergent;
+          return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: { ...comparison, reason: 'DIGEST_DIVERGENCE' } });
+        }
         this.#state = CONVERGENCE_STATES.converged;
         return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison });
       }
@@ -75,6 +83,7 @@ export class ObservabilityConvergenceKernel {
         fromSourceSequence: comparison.fromSourceSequence,
         toSourceSequence: comparison.toSourceSequence,
         expectedDigest: comparison.expectedDigest,
+        integrity: this.#integrity,
         signal,
         requestId,
       });
@@ -86,6 +95,13 @@ export class ObservabilityConvergenceKernel {
       const after = await this.#remote.inspect({ sourceNodeId, signal });
       const finalLocal = this.#local.snapshot();
       const finalComparison = compareSnapshots(finalLocal, after);
+      if (finalComparison.state === 'converged' && finalComparison.expectedDigest) {
+        const verified = await this.#remote.verifyDigest?.({ sourceNodeId, expectedDigest: finalComparison.expectedDigest, signal }) ?? { valid: true };
+        if (!verified.valid) {
+          finalComparison.state = 'divergent';
+          finalComparison.reason = 'DIGEST_VERIFICATION_FAILED';
+        }
+      }
       this.#state = finalComparison.state === 'converged' ? CONVERGENCE_STATES.converged : CONVERGENCE_STATES.divergent;
       return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: finalComparison, repair });
     } catch (error) {
@@ -118,7 +134,7 @@ function compareSnapshots(local, remote) {
     return { state: 'blocked', reason: 'FENCING_DIVERGENCE', localFencingToken: localValue.fencingToken, remoteFencingToken: remoteValue.fencingToken, fromSourceSequence: 1, toSourceSequence: 0 };
   }
   if (localValue.sourceSequence === remoteValue.sourceSequence && localValue.eventSequence === remoteValue.eventSequence) {
-    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken };
+    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken, digest: localValue.digest ?? null, expectedDigest: remoteValue.digest ?? null };
   }
   const from = Math.min(localValue.sourceSequence, remoteValue.sourceSequence) + 1;
   const to = Math.max(localValue.sourceSequence, remoteValue.sourceSequence);
@@ -129,6 +145,7 @@ function compareSnapshots(local, remote) {
     fromSourceSequence: from,
     toSourceSequence: to,
     expectedDigest: remoteValue.digest ?? null,
+    digest: localValue.digest ?? null,
   };
 }
 function validateNode(value) { if (typeof value !== 'string' || !value.trim()) throw new TypeError('sourceNodeId must be a non-empty string'); }

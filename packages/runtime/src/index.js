@@ -59,3 +59,4 @@ export { RuntimeSupervisorKernel, RUNTIME_SUPERVISOR_SCHEMA_VERSION, RUNTIME_SUP
 export { RuntimePolicyEnforcementKernel, RUNTIME_POLICY_ENFORCEMENT_SCHEMA_VERSION, RUNTIME_POLICY_DECISIONS } from './policy-enforcement.js';
 export { RuntimeExecutionTransactionKernel, RUNTIME_EXECUTION_TRANSACTION_SCHEMA_VERSION, RUNTIME_EXECUTION_TRANSACTION_STATES } from './execution-transaction.js';
 export { ExecutionJournal, DurableExecutionState, EXECUTION_JOURNAL_SCHEMA_VERSION } from './execution-journal.js';
+export { ExecutionRecoveryCoordinator, EXECUTION_RECOVERY_COORDINATOR_SCHEMA_VERSION, EXECUTION_RECOVERY_COORDINATOR_STATES } from './execution-recovery-coordinator.js';

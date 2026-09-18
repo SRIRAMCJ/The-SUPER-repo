@@ -31,6 +31,7 @@ export class ControlPlaneGateway {
     const admission = await this.requestGuard.admit(request);
     if (admission.decision === 'denied') return failure(admission.error.code === 'RATE_LIMITED' ? 429 : admission.error.code === 'BODY_TOO_LARGE' ? 413 : 400, admission.error.code, admission.error.message, admission.retryAfterMs);
     if (admission.decision === 'replay') return admission.response;
+    if (admission.decision === 'in_progress') return failure(409, 'IDEMPOTENCY_IN_PROGRESS', 'A request with this idempotency key is already in progress', admission.retryAfterMs);
     let authorized = false;
     try { authorized = await this.authorize({ method, path: route, request }); } catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
     if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
@@ -61,7 +62,7 @@ export class ControlPlaneGateway {
         if (body !== null && typeof body !== 'object') return failure(400, 'INVALID_BODY', 'Request body must be an object');
         const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason : undefined;
         const response = ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
-        this.requestGuard.complete(admission, response);
+        await this.requestGuard.complete(admission, response);
         return response;
       }
       return failure(404, 'NOT_FOUND', `Unknown control-plane route: ${method} ${route}`);

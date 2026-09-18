@@ -165,6 +165,8 @@ export class DurableEventLog {
     }
     const events = [];
     let latestSequence = 0;
+    let sourceSequences = new Map();
+    let sourceFences = new Map();
     for (const [index, line] of text.split('\\n').filter(Boolean).entries()) {
       let record;
       try {
@@ -177,6 +179,8 @@ export class DurableEventLog {
         events.length = 0;
         events.push(...record.events);
         latestSequence = record.sequence;
+        sourceSequences = new Map(Object.entries(record.sourceSequences ?? {}));
+        sourceFences = new Map(Object.entries(record.sourceFencingTokens ?? {}));
         if (record.sourceSequences) {
           for (const [nodeId, sequence] of Object.entries(record.sourceSequences)) {
             if (!Number.isInteger(sequence) || sequence < 0) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid source sequence cursor for ${nodeId}`);
@@ -194,24 +198,20 @@ export class DurableEventLog {
         }
         events.push(record.event);
         latestSequence = record.event.sequence;
+        const previousSource = Number(sourceSequences.get(record.event.sourceNodeId) ?? 0);
+        const previousFence = Number(sourceFences.get(record.event.sourceNodeId) ?? 0);
+        if (record.event.sourceSequence <= previousSource) throw eventLogError('EVENT_LOG_REPLAY_FAILED', 'Non-monotonic source sequence during replay');
+        if (record.event.fencingToken < previousFence) throw eventLogError('EVENT_LOG_REPLAY_FAILED', 'Non-monotonic fencing token during replay');
+        sourceSequences.set(record.event.sourceNodeId, record.event.sourceSequence);
+        sourceFences.set(record.event.sourceNodeId, record.event.fencingToken);
       } else {
         throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Unknown record operation at line ${index + 1}`);
       }
     }
     this.#events = events.slice(-this.#maxEvents);
     this.#seen = new Set(this.#events.map((event) => event.id));
-    this.#sourceSequences = new Map();
-    this.#sourceFences = new Map();
-    for (const event of this.#events) {
-      const previous = this.#sourceSequences.get(event.sourceNodeId) ?? 0;
-      if (event.sourceSequence <= previous) {
-        throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Non-monotonic source sequence for ${event.sourceNodeId}`);
-      }
-      this.#sourceSequences.set(event.sourceNodeId, event.sourceSequence);
-      const fence = this.#sourceFences.get(event.sourceNodeId) ?? 0;
-      if (event.fencingToken < fence) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Non-monotonic fencing token for ${event.sourceNodeId}`);
-      this.#sourceFences.set(event.sourceNodeId, event.fencingToken);
-    }
+    this.#sourceSequences = new Map([...sourceSequences].map(([nodeId, value]) => [nodeId, Number(value)]));
+    this.#sourceFences = new Map([...sourceFences].map(([nodeId, value]) => [nodeId, Number(value)]));
     this.#sequence = latestSequence;
   }
 

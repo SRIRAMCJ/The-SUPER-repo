@@ -65,10 +65,10 @@ describe('ExecutionSandbox', () => {
     expect(result.error.code).toBe('NETWORK_ISOLATION_UNAVAILABLE');
   });
 
-  it('requires cwd for filesystem policies', async () => {
+  it('fails closed for unsupported filesystem isolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-8' });
     const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { policy: { filesystem: 'workspace' } });
-    expect(result.error.code).toBe('WORKSPACE_REQUIRED');
+    expect(result.error.code).toBe('FILESYSTEM_ISOLATION_UNAVAILABLE');
   });
 
   it('bounds retained records and prevents id reuse', async () => {

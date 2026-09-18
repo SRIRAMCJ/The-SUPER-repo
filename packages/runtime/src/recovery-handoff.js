@@ -23,13 +23,13 @@ export class RecoveryHandoffKernel {
     this.#handoffs.set(transactionId,handoff); this.#record('handoff_offered',handoff); return clone(handoff);
   }
 
-  accept({ transactionId, targetNodeId, ownerId, signal=null }={}) {
+  async accept({ transactionId, targetNodeId, ownerId, signal=null }={}) {
     if (signal?.aborted) throw error('RECOVERY_HANDOFF_CANCELLED','Handoff cancelled before acceptance');
     const current=this.#require(transactionId);
     this.#expireIfNeeded(current);
     if (current.state !== 'offered') throw error('RECOVERY_HANDOFF_NOT_OFFERED','Handoff is not awaiting acceptance');
     if (targetNodeId !== current.targetNodeId) throw error('RECOVERY_HANDOFF_TARGET_MISMATCH','Target node does not match handoff');
-    const lease=awaitable(this.lease.acquire({executionId:transactionId,ownerId,nodeId:targetNodeId,signal,reason:'recovery_handoff'}));
+    const lease=await this.lease.acquire({executionId:transactionId,ownerId,nodeId:targetNodeId,signal,reason:'recovery_handoff'});
     const accepted=freeze({...current,state:'accepted',fencingToken:lease.fencingToken,acceptedAt:this.nowIso()});
     this.#handoffs.set(transactionId,accepted); this.#record('handoff_accepted',accepted); return {handoff:clone(accepted),lease};
   }
@@ -75,7 +75,6 @@ export class RecoveryHandoffKernel {
   nowIso(){const value=this.clock();if(!(value instanceof Date)||Number.isNaN(value.getTime()))throw new TypeError('clock must return a valid Date');return value.toISOString();}
 }
 
-function awaitable(value){ if (value && typeof value.then==='function') throw error('RECOVERY_HANDOFF_ASYNC_LEASE_UNSUPPORTED','Handoff acceptance requires a synchronous lease primitive'); return value; }
 function error(code,message){return Object.assign(new Error(message),{code,retryable:false});}
 function clone(value){return value==null?value:structuredClone(value);}
 function freeze(value){return deepFreeze(structuredClone(value));}

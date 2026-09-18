@@ -7,7 +7,7 @@ export const SANDBOX_TERMINAL_STATES = Object.freeze(['succeeded', 'failed', 'ca
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
 const DEFAULT_MAX_RECORDS = 500;
-const SAFE_ENV = new Set(['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_OPTIONS']);
+const SAFE_ENV = new Set(['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL']);
 
 export class ExecutionSandbox {
   #records = new Map();
@@ -73,12 +73,14 @@ export class ExecutionSandbox {
     let outputBytes = 0;
     let outputLimit = false;
     let settled = false;
+    let terminationReason = null;
     let timer = null;
     let detach = null;
 
     const terminate = (reason, code) => {
       if (settled) return;
       settled = true;
+      terminationReason = code;
       try { child.kill('SIGTERM'); } catch {}
       setTimeout(() => { try { if (!child.killed) child.kill('SIGKILL'); } catch {} }, 100).unref?.();
       return code;
@@ -126,7 +128,7 @@ export class ExecutionSandbox {
         detach?.();
         const completedAt = this.clock().toISOString();
         const status = settled
-          ? (outputLimit ? 'failed' : inferTerminal(signal?.aborted, signalName, child, exitCode))
+          ? (outputLimit ? 'failed' : inferTerminal(terminationReason, signalName, exitCode))
           : exitCode === 0 ? 'succeeded' : 'failed';
         const error = status === 'succeeded' ? null : {
           code: outputLimit ? 'OUTPUT_LIMIT' : status === 'cancelled' ? 'CANCELLED' : status === 'timed_out' ? 'TIMED_OUT' : 'PROCESS_EXIT',
@@ -209,9 +211,8 @@ function codeError(code, message) { const error = new Error(message); error.code
 function failure(executionId, code, message, startedAt = null, output = {}) {
   return { schemaVersion: SANDBOX_SCHEMA_VERSION, executionId, status: 'failed', startedAt, completedAt: new Date().toISOString(), error: { code, message }, ...output };
 }
-function inferTerminal(aborted, signalName, child, exitCode) {
-  if (aborted) return 'cancelled';
-  if (signalName && /TERM|KILL/i.test(signalName)) return 'timed_out';
-  if (child.killed && exitCode !== 0) return 'timed_out';
+function inferTerminal(terminationReason, signalName, exitCode) {
+  if (terminationReason === 'CANCELLED') return 'cancelled';
+  if (terminationReason === 'TIMED_OUT') return 'timed_out';
   return 'failed';
 }

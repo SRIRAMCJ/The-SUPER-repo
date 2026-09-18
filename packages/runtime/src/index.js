@@ -61,5 +61,5 @@ export { RuntimeExecutionTransactionKernel, RUNTIME_EXECUTION_TRANSACTION_SCHEMA
 export { ExecutionJournal, DurableExecutionState, EXECUTION_JOURNAL_SCHEMA_VERSION } from './execution-journal.js';
 export { ExecutionRecoveryCoordinator, EXECUTION_RECOVERY_COORDINATOR_SCHEMA_VERSION, EXECUTION_RECOVERY_COORDINATOR_STATES } from './execution-recovery-coordinator.js';
 export { RecoveryLeaseKernel, RECOVERY_LEASE_SCHEMA_VERSION, RECOVERY_LEASE_STATES, RECOVERY_LEASE_DENIALS } from './recovery-lease.js';
-
 export { DistributedTransactionRecovery, DISTRIBUTED_TRANSACTION_RECOVERY_SCHEMA_VERSION, DISTRIBUTED_TRANSACTION_RECOVERY_STATES } from './distributed-recovery.js';
+export { RecoveryStateReplicator, RECOVERY_STATE_REPLICATION_SCHEMA_VERSION, RECOVERY_STATE_REPLICATION_STATES } from './recovery-state-replication.js';

@@ -52,7 +52,7 @@ export class ControlPlaneGateway {
         if (typeof body.command !== 'string' || !body.command.trim()) return failure(400, 'INVALID_INPUT', 'command must be a non-empty string');
         const result = await this.commands.execute(body.command, body.input ?? {}, { correlationId: body.correlationId, request });
         const response = result.ok ? ok(result, 200) : commandFailure(result);
-        this.requestGuard.complete(admission, response);
+        await this.requestGuard.complete(admission, response);
         return response;
       }
       if (method === 'POST' && /^\/executions\/[^/]+\/cancel$/.test(route)) {

@@ -30,6 +30,7 @@ export { RuntimeRequestIdentity, RUNTIME_REQUEST_IDENTITY_SCHEMA_VERSION } from 
 export { RuntimeDistributedRateLimiter, InMemoryAtomicRateLimitStore, RUNTIME_DISTRIBUTED_RATE_LIMITER_SCHEMA_VERSION } from './distributed-rate-limiter.js';
 export { DurableIdempotencyStore, DURABLE_IDEMPOTENCY_SCHEMA_VERSION } from './durable-idempotency.js';
 export { DistributedEventTransport, DISTRIBUTED_EVENT_TRANSPORT_SCHEMA_VERSION } from './distributed-event-transport.js';
+export { DurableEventLog, DURABLE_EVENT_LOG_SCHEMA_VERSION, DURABLE_EVENT_LOG_TERMINAL_STATES } from './durable-event-log.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

@@ -22,6 +22,12 @@ describe('SecurityCapabilityGate', () => {
     expect(gate.authorize(capability(), context({ grantedPermissions: ['network'], network: true }))).toMatchObject({ decision: 'invalid', allowed: false });
   });
 
+  it('requires every requested permission to be explicitly granted', () => {
+    const gate = new SecurityCapabilityGate({ idFactory: () => 'sec-permission' });
+    expect(gate.authorize(capability({ permissions: ['filesystem'] }), context())).toMatchObject({ decision: 'invalid', allowed: false });
+    expect(gate.authorize(capability({ permissions: ['filesystem'] }), context({ grantedPermissions: ['filesystem'] }))).toMatchObject({ decision: 'allowed', allowed: true });
+  });
+
   it('requires explicit network authorization', () => {
     const gate = new SecurityCapabilityGate({ idFactory: () => 'sec-3' });
     expect(gate.authorize(capability({ permissions: ['network'] }), context({ grantedPermissions: ['network'] }))).toMatchObject({ decision: 'invalid', allowed: false });

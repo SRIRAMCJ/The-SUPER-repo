@@ -6,13 +6,15 @@ export class RuntimeExecutionTransactionKernel {
   #idempotency = new Map();
   #history = [];
 
-  constructor({ admission, clock = () => new Date(), idFactory = defaultId, maxHistory = 256 } = {}) {
+  constructor({ admission, durableState = null, clock = () => new Date(), idFactory = defaultId, maxHistory = 256 } = {}) {
     if (!admission || typeof admission.admit !== 'function' || typeof admission.release !== 'function') {
       throw new TypeError('admission must expose admit() and release()');
     }
+    if (durableState && (typeof durableState.record !== 'function' || typeof durableState.load !== 'function')) throw new TypeError('durableState must expose record() and load()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     this.admission = admission;
+    this.durableState = durableState;
     this.clock = clock;
     this.idFactory = idFactory;
     this.maxHistory = maxHistory;
@@ -54,6 +56,7 @@ export class RuntimeExecutionTransactionKernel {
     this.#transactions.set(transactionId, transaction);
     if (idempotencyKey) this.#idempotency.set(idempotencyKey, transactionId);
     this.#record({ event: 'began', transactionId, executionId, correlationId, status: 'active' });
+    await this.#persist(transaction);
     return this.#public(transaction);
   }
 
@@ -83,6 +86,7 @@ export class RuntimeExecutionTransactionKernel {
       throw Object.assign(new Error(transaction.error.message), transaction.error);
     }
     this.#record({ event: 'committed', transactionId, executionId: transaction.executionId, correlationId: transaction.correlationId, status: transaction.status });
+    await this.#persist(transaction);
     return this.#public(transaction);
   }
 
@@ -133,6 +137,7 @@ export class RuntimeExecutionTransactionKernel {
     transaction.completedAt = this.nowIso();
     transaction.error = failed ? { code: signal?.aborted ? 'TRANSACTION_CANCELLED' : 'ROLLBACK_FAILED', message: signal?.aborted ? 'Rollback was cancelled or incomplete' : 'One or more rollback steps failed', retryable: true } : undefined;
     this.#record({ event: failed ? 'rollback_failed' : 'rolled_back', transactionId, executionId: transaction.executionId, correlationId: transaction.correlationId, status: transaction.status, compensationResults: clone(compensationResults) });
+    await this.#persist(transaction);
     return this.#public(transaction);
   }
 
@@ -162,6 +167,17 @@ export class RuntimeExecutionTransactionKernel {
   async recover(transactionId, { signal } = {}) {
     const transaction = this.#active(transactionId);
     return this.rollback(transactionId, 'recovery_abandoned_transaction', { signal });
+  }
+
+  async recoverDurable() {
+    if (!this.durableState) throw transactionError('DURABLE_STATE_UNAVAILABLE', 'No durable state store configured');
+    const states = await this.durableState.load();
+    for (const state of states) {
+      if (this.#transactions.has(state.transactionId)) continue;
+      this.#transactions.set(state.transactionId, { ...state, compensations: [], admission: null, resources: {}, metadata: {} });
+      if (state.idempotencyKey) this.#idempotency.set(state.idempotencyKey, state.transactionId);
+    }
+    return freeze(states.map(clone));
   }
 
   get(transactionId) {
@@ -205,6 +221,11 @@ export class RuntimeExecutionTransactionKernel {
   #public(transaction) {
     const value = { ...transaction, compensations: transaction.compensations.map(({ handler, ...item }) => item) };
     return freeze(value);
+  }
+
+  async #persist(transaction) {
+    if (!this.durableState) return;
+    await this.durableState.record({ executionId: transaction.executionId, transactionId: transaction.transactionId, status: transaction.status, operation: transaction.operation, correlationId: transaction.correlationId, idempotencyKey: transaction.idempotencyKey, result: transaction.result, error: transaction.error });
   }
 
   #record(value) {

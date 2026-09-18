@@ -4,15 +4,19 @@ export class ObservabilityCheckpointAuthority {
   #clock;
   #idFactory;
   #maxHistory;
+  #store;
   #checkpoints = new Map();
   #history = [];
 
-  constructor({ clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
+  constructor({ clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000, store = null } = {}) {
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     this.#clock = clock;
     this.#idFactory = idFactory;
+    if (store !== null && (typeof store.replay !== 'function' || typeof store.append !== 'function')) throw new TypeError('store must expose replay() and append()');
     this.#maxHistory = maxHistory;
+    this.#store = store;
+    if (this.#store) for (const checkpoint of this.#store.replay()) this.#checkpoints.set(checkpoint.sourceNodeId, freeze(checkpoint));
   }
 
   commit({ nodeId, sourceNodeId, sourceSequence, fencingToken, eventSequence, digest = null } = {}) {
@@ -40,6 +44,10 @@ export class ObservabilityCheckpointAuthority {
       digest,
       committedAt: this.#clock().toISOString(),
     });
+    if (this.#store) {
+      const persisted = this.#store.append(checkpoint);
+      if (persisted.state !== 'committed') return this.#result(persisted.state, { sourceNodeId, checkpoint: persisted.checkpoint });
+    }
     this.#checkpoints.set(sourceNodeId, checkpoint);
     this.#record({ type: 'committed', checkpoint });
     return this.#result('committed', { checkpoint });

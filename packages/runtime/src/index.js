@@ -33,6 +33,7 @@ export { DistributedEventTransport, DISTRIBUTED_EVENT_TRANSPORT_SCHEMA_VERSION }
 export { DurableEventLog, DURABLE_EVENT_LOG_SCHEMA_VERSION, DURABLE_EVENT_LOG_TERMINAL_STATES } from './durable-event-log.js';
 export { ObservabilitySyncCoordinator, OBSERVABILITY_SYNC_SCHEMA_VERSION, OBSERVABILITY_SYNC_STATES } from './observability-sync.js';
 export { ObservabilityCheckpointAuthority, OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './observability-checkpoint.js';
+export { DurableObservabilityCheckpointStore, DURABLE_OBSERVABILITY_CHECKPOINT_SCHEMA_VERSION } from './durable-observability-checkpoint.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

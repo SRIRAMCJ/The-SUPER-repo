@@ -20,6 +20,7 @@ export class RuntimeRequestGuard {
     keyResolver = null,
     identity = null,
     rateLimiter = null,
+    idempotencyStore = null,
   } = {}) {
     if (typeof clock !== 'function') throw new TypeError('clock must be a function');
     for (const [name, value] of [['maxRequests', maxRequests], ['windowMs', windowMs], ['maxBodyBytes', maxBodyBytes], ['idempotencyTtlMs', idempotencyTtlMs], ['maxIdempotencyRecords', maxIdempotencyRecords]]) {
@@ -28,6 +29,7 @@ export class RuntimeRequestGuard {
     if (keyResolver !== null && typeof keyResolver !== 'function') throw new TypeError('keyResolver must be a function');
     if (identity !== null && typeof identity.resolve !== 'function') throw new TypeError('identity must expose resolve()');
     if (rateLimiter !== null && typeof rateLimiter.consume !== 'function') throw new TypeError('rateLimiter must expose consume()');
+    if (idempotencyStore !== null && (typeof idempotencyStore.get !== 'function' || typeof idempotencyStore.put !== 'function')) throw new TypeError('idempotencyStore must expose get() and put()');
     this.clock = clock;
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
@@ -37,6 +39,7 @@ export class RuntimeRequestGuard {
     this.identity = identity ?? new RuntimeRequestIdentity();
     this.keyResolver = keyResolver;
     this.rateLimiter = rateLimiter;
+    this.idempotencyStore = idempotencyStore;
   }
 
   async admit(request = {}) {
@@ -71,7 +74,7 @@ export class RuntimeRequestGuard {
     if (idempotencyKey && REPLAYABLE_METHODS.has(method)) {
       const cacheKey = principal + ':' + method + ':' + path + ':' + idempotencyKey;
       const fingerprint = fingerprintRequest(request);
-      const existing = this.#idempotency.get(cacheKey);
+      const existing = this.idempotencyStore ? await this.idempotencyStore.get(cacheKey) : this.#idempotency.get(cacheKey);
       if (existing && existing.expiresAt > now) {
         if (existing.fingerprint !== fingerprint) return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');
         return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'replay', cacheKey, response: existing.response, identity });
@@ -81,11 +84,13 @@ export class RuntimeRequestGuard {
     return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey: null, fingerprint: null, identity });
   }
 
-  complete(admission, response) {
+  async complete(admission, response) {
     if (!admission || admission.decision !== 'accepted' || !admission.cacheKey) return false;
     this.#purge();
     const now = this.clock();
-    this.#idempotency.set(admission.cacheKey, freeze({ schemaVersion: SCHEMA_VERSION, fingerprint: admission.fingerprint, response: response === undefined ? null : response, createdAt: now, expiresAt: now + this.idempotencyTtlMs }));
+    const record = freeze({ schemaVersion: SCHEMA_VERSION, fingerprint: admission.fingerprint, response: response === undefined ? null : response, createdAt: now, expiresAt: now + this.idempotencyTtlMs });
+    if (this.idempotencyStore) await this.idempotencyStore.put(admission.cacheKey, record, { expiresAt: record.expiresAt });
+    else this.#idempotency.set(admission.cacheKey, record);
     while (this.#idempotency.size > this.maxIdempotencyRecords) this.#idempotency.delete(this.#idempotency.keys().next().value);
     return true;
   }
@@ -100,6 +105,7 @@ export class RuntimeRequestGuard {
       retainedIdempotencyRecords: this.#idempotency.size,
       identity: this.identity.snapshot(),
       distributedRateLimiter: this.rateLimiter ? this.rateLimiter.snapshot() : null,
+      durableIdempotency: this.idempotencyStore ? true : false,
     });
   }
 

@@ -37,7 +37,7 @@ test('request guard isolates principals and retains bounded idempotency records'
   const guard = new RuntimeRequestGuard({ maxRequests: 1, maxIdempotencyRecords: 1 });
   const a = await guard.admit({ method: 'POST', path: '/commands', clientKey: 'a', idempotencyKey: '1', body: {} });
   const b = await guard.admit({ method: 'POST', path: '/commands', clientKey: 'b', idempotencyKey: '2', body: {} });
-  guard.complete(a, { status: 200 }); guard.complete(b, { status: 200 });
+  await guard.complete(a, { status: 200 }); await guard.complete(b, { status: 200 });
   assert.equal(guard.snapshot().retainedIdempotencyRecords, 1);
   assert.equal(guard.snapshot().activeRateWindows, 2);
 });
@@ -68,4 +68,28 @@ test('shared rate limiter fails closed when its atomic store is unavailable', as
   const guard = new RuntimeRequestGuard({ rateLimiter: limiter });
   const result = await guard.admit({ method: 'GET', path: '/health', clientKey: 'a' });
   assert.equal(result.error.code, 'RATE_LIMIT_STORE_UNAVAILABLE');
+});
+
+
+test('request guard replays responses from a durable idempotency store after restart', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { DurableIdempotencyStore } = await import('../src/index.js');
+  const dir = await mkdtemp(join(tmpdir(), 'super-idempotency-'));
+  try {
+    const filePath = join(dir, 'idempotency.jsonl');
+    const firstStore = await new DurableIdempotencyStore({ filePath, ttlMs: 10_000 }).init();
+    const firstGuard = new RuntimeRequestGuard({ idempotencyStore: firstStore, idempotencyTtlMs: 10_000 });
+    const request = { method: 'POST', path: '/commands', clientKey: 'restartable', headers: { 'idempotency-key': 'r-1' }, body: { command: 'runtime.health' } };
+    const admission = await firstGuard.admit(request);
+    await firstGuard.complete(admission, { status: 200, body: { ok: true, data: 'persisted' } });
+    const secondStore = await new DurableIdempotencyStore({ filePath, ttlMs: 10_000 }).init();
+    const secondGuard = new RuntimeRequestGuard({ idempotencyStore: secondStore, idempotencyTtlMs: 10_000 });
+    const replay = await secondGuard.admit(request);
+    assert.equal(replay.decision, 'replay');
+    assert.equal(replay.response.body.data, 'persisted');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

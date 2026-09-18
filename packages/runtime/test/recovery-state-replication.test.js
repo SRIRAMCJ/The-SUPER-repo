@@ -76,3 +76,31 @@ test('replication history retention compacts durable records to bounded latest s
     assert.equal(loaded.list().length,2);
   } finally { await rm(f.dir,{recursive:true,force:true}); }
 });
+
+test('cross-node sync converges a lagging replica and remains idempotent', async () => {
+  const aDir=await fixture(), bDir=await fixture(), cDir=await fixture();
+  try {
+    const a=new RecoveryStateReplicator({filePath:aDir.filePath,idFactory:(p)=>p+'-a'});
+    const b=new RecoveryStateReplicator({filePath:bDir.filePath,idFactory:(p)=>p+'-b'});
+    const nodeC=new RecoveryStateReplicator({filePath:cDir.filePath,idFactory:(p)=>p+'-c'});
+    await a.append(record(1,'detected',{recordId:'a1'}));
+    await a.append(record(2,'recovering',{recordId:'a2'}));
+    await b.append(record(1,'detected',{recordId:'a1'}));
+    const first=await b.syncFrom(a);
+    assert.equal(first.applied.length,1); assert.equal(b.get('tx-1').state,'recovering');
+    const second=await b.syncFrom(a); assert.equal(second.applied.length,0); assert.equal(second.duplicates.length,2);
+    await nodeC.syncFrom(b); assert.equal(nodeC.get('tx-1').state,'recovering'); assert.equal(nodeC.get('tx-1').sequence,2);
+  } finally { await Promise.all([rm(aDir.dir,{recursive:true,force:true}),rm(bDir.dir,{recursive:true,force:true}),rm(cDir.dir,{recursive:true,force:true})]); }
+});
+
+test('cross-node sync rejects stale and fenced records without poisoning the replica', async () => {
+  const f=await fixture();
+  try {
+    const r=new RecoveryStateReplicator({filePath:f.filePath,idFactory:(p)=>p+'-r'});
+    await r.append(record(3,'succeeded',{fencingToken:5,recordId:'current'}));
+    const source=new RecoveryStateReplicator({filePath:path.join(f.dir,'source.jsonl'),idFactory:(p)=>p+'-s'});
+    await source.append(record(1,'recovering',{fencingToken:1,recordId:'old'}));
+    const outcome=await r.syncFrom(source); assert.equal(outcome.applied.length,0); assert.equal(outcome.rejected.length,1);
+    assert.equal(r.get('tx-1').state,'succeeded'); assert.equal(r.get('tx-1').fencingToken,5);
+  } finally { await rm(f.dir,{recursive:true,force:true}); }
+});

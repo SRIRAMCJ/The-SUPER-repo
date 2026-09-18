@@ -76,3 +76,28 @@ test('convergence history is bounded and immutable', async () => {
   assert.equal(history.length, 1);
   assert.throws(() => history.push({}), TypeError);
 });
+
+
+test('convergence detects equal sequence with divergent checkpoint digests', async () => {
+  const local = { snapshot: () => ({ checkpoint: { checkpoints: { 'source-a': { sourceSequence: 4, eventSequence: 40, fencingToken: 4, digest: 'a'.repeat(64) } } } }) };
+  const remote = {
+    async inspect() { return { sourceNodeId: 'source-a', checkpoint: { sourceSequence: 4, eventSequence: 40, fencingToken: 4, digest: 'b'.repeat(64) } }; },
+    async repair() { throw new Error('repair must not run for digest-only divergence'); },
+  };
+  const kernel = new ObservabilityConvergenceKernel({ local, remote, idFactory: () => 'digest-divergence' });
+  const result = await kernel.reconcile({ sourceNodeId: 'source-a' });
+  assert.equal(result.state, 'divergent');
+  assert.equal(result.comparison.reason, 'DIGEST_DIVERGENCE');
+});
+
+test('convergence accepts matching sequence and digest state', async () => {
+  const digest = 'c'.repeat(64);
+  const local = { snapshot: () => ({ checkpoint: { checkpoints: { 'source-a': { sourceSequence: 4, eventSequence: 40, fencingToken: 4, digest } } } }) };
+  const remote = {
+    async inspect() { return { sourceNodeId: 'source-a', checkpoint: { sourceSequence: 4, eventSequence: 40, fencingToken: 4, digest } }; },
+  };
+  const kernel = new ObservabilityConvergenceKernel({ local, remote, idFactory: () => 'digest-match' });
+  const result = await kernel.reconcile({ sourceNodeId: 'source-a' });
+  assert.equal(result.state, 'converged');
+  assert.equal(result.comparison.digest, digest);
+});

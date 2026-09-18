@@ -109,6 +109,16 @@ export class DurableEventLog {
     return Object.freeze(this.#events.filter((event) => event.sequence > afterSequence).slice(0, limit).map(clone));
   }
 
+  replaySource({ sourceNodeId, afterSourceSequence = 0, limit = this.#maxEvents } = {}) {
+    validateNode(sourceNodeId);
+    if (!Number.isInteger(afterSourceSequence) || afterSourceSequence < 0) throw new TypeError('afterSourceSequence must be a non-negative integer');
+    if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer');
+    return Object.freeze(this.#events
+      .filter((event) => event.sourceNodeId === sourceNodeId && event.sourceSequence > afterSourceSequence)
+      .slice(0, limit)
+      .map(clone));
+  }
+
   async replay({ afterSequence = 0, limit = this.#maxEvents } = {}) {
     await this.#reload();
     return this.history({ afterSequence, limit });

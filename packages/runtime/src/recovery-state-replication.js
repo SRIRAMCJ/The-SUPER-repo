@@ -8,16 +8,19 @@ export class RecoveryStateReplicator {
   constructor({ filePath, clock = () => new Date(), idFactory = defaultId, maxRecords = 10_000 } = {}) {
     if (typeof filePath !== 'string' || !filePath.trim()) throw new TypeError('filePath must be a non-empty string');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
-    if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
+    if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be positive');
     this.filePath = path.resolve(filePath); this.clock = clock; this.idFactory = idFactory; this.maxRecords = maxRecords;
     this.writeQueue = Promise.resolve(); this.latest = new Map(); this.loaded = false;
   }
 
-  async append({ transactionId, sequence, state, ownerId, nodeId, fencingToken, recoveryId = null, requestId = null, result = null, error = null, timestamp = null } = {}) {
-    const record = this.validate({ transactionId, sequence, state, ownerId, nodeId, fencingToken, recoveryId, requestId, result, error, timestamp });
+  async append(input = {}) {
+    const record = this.validate(input);
     await this.load();
-    this.applyToMemory(record);
+    const decision = this.checkConflict(record);
+    if (decision === 'duplicate') return clone(this.latest.get(record.transactionId));
+    this.assertWritable(decision);
     await this.persist(record);
+    this.applyToMemory(record);
     return clone(record);
   }
 
@@ -26,10 +29,9 @@ export class RecoveryStateReplicator {
     await this.load();
     const decision = this.checkConflict(normalized);
     if (decision === 'duplicate') return { applied: false, duplicate: true, record: clone(this.latest.get(normalized.transactionId)) };
-    if (decision === 'stale') throw recoveryError('RECOVERY_STATE_STALE', 'Recovery state is older than the current transaction state');
-    if (decision === 'fence') throw recoveryError('RECOVERY_STATE_FENCED', 'Recovery state has a stale fencing token');
-    if (decision === 'conflict') throw recoveryError('RECOVERY_STATE_CONFLICT', 'Recovery state conflicts at the same sequence');
-    this.applyToMemory(normalized); await this.persist(normalized);
+    this.assertWritable(decision);
+    await this.persist(normalized);
+    this.applyToMemory(normalized);
     return { applied: true, duplicate: false, record: clone(normalized) };
   }
 
@@ -46,7 +48,7 @@ export class RecoveryStateReplicator {
       const normalized = this.validate(record);
       const decision = this.checkConflict(normalized);
       if (decision === 'duplicate') continue;
-      if (decision === 'stale' || decision === 'fence' || decision === 'conflict') throw recoveryError('RECOVERY_STATE_REPLAY_CONFLICT', 'Durable recovery state contains conflicting records');
+      this.assertWritable(decision, true);
       this.applyToMemory(normalized);
     }
     this.loaded = true;
@@ -61,18 +63,18 @@ export class RecoveryStateReplicator {
     if (!record || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('Recovery state record must be an object');
     const { transactionId, sequence, state, ownerId, nodeId, fencingToken } = record;
     if (typeof transactionId !== 'string' || !transactionId) throw new TypeError('transactionId is required');
-    if (!Number.isSafeInteger(sequence) || sequence < 1) throw new TypeError('sequence must be a positive safe integer');
+    if (!Number.isSafeInteger(sequence) || sequence < 1) throw new TypeError('sequence must be positive');
     if (!STATES.includes(state)) throw new TypeError(`unsupported recovery state: ${state}`);
     if (typeof ownerId !== 'string' || !ownerId || typeof nodeId !== 'string' || !nodeId) throw new TypeError('ownerId and nodeId are required');
-    if (!Number.isSafeInteger(fencingToken) || fencingToken < 1) throw new TypeError('fencingToken must be a positive safe integer');
+    if (!Number.isSafeInteger(fencingToken) || fencingToken < 1) throw new TypeError('fencingToken must be positive');
     const value = {
       schemaVersion: SCHEMA_VERSION, recordId: record.recordId ?? this.idFactory('recovery-state'),
       transactionId, sequence, state, ownerId, nodeId, fencingToken,
       recoveryId: record.recoveryId ?? null, requestId: record.requestId ?? null,
-      result: clone(record.result), error: clone(record.error),
+      reason: record.reason ?? null, result: clone(record.result), error: clone(record.error),
       timestamp: record.timestamp ?? this.nowIso()
     };
-    if (typeof value.recordId !== 'string' || !value.recordId) throw new TypeError('recordId must be a non-empty string');
+    if (typeof value.recordId !== 'string' || !value.recordId) throw new TypeError('recordId must be non-empty');
     return freeze(value);
   }
 
@@ -84,6 +86,14 @@ export class RecoveryStateReplicator {
     if (record.fencingToken < current.fencingToken) return 'fence';
     if (isTerminal(current.state) && !isTerminal(record.state)) return 'stale';
     return 'new';
+  }
+
+  assertWritable(decision, replay = false) {
+    if (decision === 'new') return;
+    if (replay) throw recoveryError('RECOVERY_STATE_REPLAY_CONFLICT', 'Durable recovery state contains conflicting records');
+    if (decision === 'stale') throw recoveryError('RECOVERY_STATE_STALE', 'Recovery state is older than current state');
+    if (decision === 'fence') throw recoveryError('RECOVERY_STATE_FENCED', 'Recovery state has a stale fencing token');
+    if (decision === 'conflict') throw recoveryError('RECOVERY_STATE_CONFLICT', 'Recovery state conflicts at the same sequence');
   }
 
   applyToMemory(record) { this.latest.set(record.transactionId, record); }
@@ -101,8 +111,7 @@ export class RecoveryStateReplicator {
 
   async compact() {
     const content = await readFile(this.filePath, 'utf8').catch(() => '');
-    const records = content.split('\\n').filter(Boolean);
-    if (records.length <= this.maxRecords) return;
+    if (content.split('\\n').filter(Boolean).length <= this.maxRecords) return;
     const retained = [...this.latest.values()].slice(-this.maxRecords);
     const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
     const handle = await open(temporaryPath, 'w');

@@ -80,8 +80,8 @@ function normalizeRequest(capability, context) {
   if (trustLevel === 'untrusted' && capability.risk === 'critical') throw new Error('Untrusted context cannot execute critical-risk capabilities');
   const requestedPermissions = normalizePermissions(capability.permissions);
   const grantedPermissions = normalizePermissions(context.grantedPermissions ?? []);
-  for (const permission of grantedPermissions) if (!requestedPermissions.has(permission)) throw new Error(`Security context grants undeclared permission: ${permission}`);
   if (capability.permissions?.some((permission) => !PERMISSIONS.has(permission))) throw new Error('Capability contains unsupported security permission');
+  for (const permission of requestedPermissions) if (!grantedPermissions.has(permission)) throw new Error(`Security context does not grant required permission: ${permission}`);
   if (requestedPermissions.has('network') && context.network !== true) throw new Error('Network permission requires explicit network=true');
   const policyContext = { approval: context.approval === true, network: context.network === true, trustLevel };
   const governanceContext = { approval: context.approval === true, network: context.network === true };

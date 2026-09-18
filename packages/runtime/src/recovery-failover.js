@@ -128,7 +128,7 @@ export class RecoveryFailoverOrchestrator {
         }
       });
 
-      const status = normalizeRemoteStatus(remote.status);
+      const status = signal?.aborted ? 'cancelled' : normalizeRemoteStatus(remote.status);
       this.handoff.complete({ transactionId, targetNodeId, fencingToken: accepted.handoff.fencingToken, status, result: remote.result ?? null });
       await this.replicate(transactionId, status, accepted.handoff.fencingToken, {
         requestId, reason, sourceNodeId, targetNodeId, result: remote.result ?? null, error: remote.error ?? null

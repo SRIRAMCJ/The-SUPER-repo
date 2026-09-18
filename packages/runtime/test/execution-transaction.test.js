@@ -110,7 +110,8 @@ test('active execution cannot create a duplicate transaction', async () => {
   const replay = await kernel.begin({ executionId: 'e1' });
   assert.equal(replay.replayed, true);
   assert.equal(replay.transactionId, first.transactionId);
-  assert.throws(() => kernel.registerCompensation(first.transactionId, () => {}), /COMPENSATION/);
+  kernel.registerCompensation(first.transactionId, () => {}, { id: 'cleanup' });
+  assert.throws(() => kernel.registerCompensation(first.transactionId, () => {}, { id: 'cleanup' }), /COMPENSATION/);
 });
 
 test('recover rolls an interrupted active transaction back and preserves immutable audit history', async () => {

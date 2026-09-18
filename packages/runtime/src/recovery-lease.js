@@ -29,7 +29,7 @@ export class RecoveryLeaseKernel {
     const current = this.#leases.get(executionId);
     if (current && current.state === 'held' && current.expiresAtMs > now) {
       if (current.ownerId === ownerId && current.nodeId === nodeId) return clone(current);
-      throw denial(RECOVERY_LEASE_HELD, 'Recovery lease is held by another owner', true, { ownerId: current.ownerId, nodeId: current.nodeId, fencingToken: current.fencingToken });
+      throw denial(RECOVERY_LEASE_DENIALS.HELD, 'Recovery lease is held by another owner', true, { ownerId: current.ownerId, nodeId: current.nodeId, fencingToken: current.fencingToken });
     }
     const fencingToken = (current?.fencingToken ?? 0) + 1;
     const ttlMs = Math.min(requestedTtlMs, this.leaseTtlMs);

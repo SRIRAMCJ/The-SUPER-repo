@@ -13,7 +13,7 @@ function harness({ remoteCheckpoint, repairState = 'succeeded' } = {}) {
     async inspect() { return { sourceNodeId: 'source-a', checkpoint: remoteCheckpoint }; },
     async repair(args) { repairs += 1; return { state: repairState, ...args }; },
   };
-  return { repairs, local, remote };
+  return { get repairs() { return repairs; }, local, remote };
 }
 
 test('convergence reports already converged without repair', async () => {

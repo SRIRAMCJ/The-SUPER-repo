@@ -81,6 +81,8 @@ export class RecoveryFailoverOrchestrator {
     try {
       if (signal?.aborted) throw cancellation();
       const sourceNodeId = sourceNode(state);
+      const replicated = this.stateReplicator.get(transactionId);
+      if (replicated && ['succeeded', 'failed', 'cancelled', 'blocked'].includes(replicated.state)) return this.#blocked(transactionId, 'FAILOVER_TERMINAL_STATE', 'Replicated recovery state is already terminal');
       if (!sourceNodeId) return this.#blocked(transactionId, 'FAILOVER_SOURCE_UNKNOWN', 'Source node is not recorded');
       const sourceStatus = await this.#nodeStatus(sourceNodeId);
       if (!force && sourceStatus === 'active') return this.#blocked(transactionId, 'FAILOVER_SOURCE_ACTIVE', 'Source node is still active; refusing automatic failover');
@@ -88,7 +90,7 @@ export class RecoveryFailoverOrchestrator {
       if (!targetNodeId) return this.#blocked(transactionId, 'FAILOVER_TARGET_UNAVAILABLE', 'No eligible target node is available');
 
       offered = this.handoff.offer({ transactionId, sourceNodeId, targetNodeId, reason, signal });
-      await this.replicate(transactionId, 'detected', 1, { requestId: offered.handoffId, reason, sourceNodeId, targetNodeId });
+      await this.replicate(transactionId, 'detected', Math.max(1, this.stateReplicator.get(transactionId)?.fencingToken ?? 1), { requestId: offered.handoffId, reason, sourceNodeId, targetNodeId });
       accepted = await this.handoff.accept({ transactionId, targetNodeId, ownerId: this.ownerId, signal });
       await this.replicate(transactionId, 'leased', accepted.handoff.fencingToken, { requestId: offered.handoffId, reason, sourceNodeId, targetNodeId });
 
@@ -163,7 +165,7 @@ export class RecoveryFailoverOrchestrator {
     const nodes = this.nodeRegistry.listNodes();
     const candidates = [];
     for (const node of nodes) {
-      if (node.nodeId === sourceNodeId || node.nodeId === this.nodeId || node.state !== 'active') continue;
+      if (node.nodeId === sourceNodeId || node.state !== 'active') continue;
       if (!node.capabilities.includes(this.recoveryCapability)) continue;
       const health = await this.#nodeStatus(node.nodeId);
       if (health === 'unhealthy' || health === 'draining' || health === 'failed' || health === 'unavailable') continue;

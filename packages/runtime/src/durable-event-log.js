@@ -15,6 +15,7 @@ export class DurableEventLog {
   #events = [];
   #seen = new Set();
   #sourceSequences = new Map();
+  #sourceFences = new Map();
   #sequence = 0;
   #initialized = false;
 
@@ -64,6 +65,8 @@ export class DurableEventLog {
         return freeze({ state: 'duplicate', event: existing ?? null });
       }
       const previous = this.#sourceSequences.get(sourceNodeId) ?? 0;
+      const previousFence = this.#sourceFences.get(sourceNodeId) ?? 0;
+      if (fencingToken < previousFence) return freeze({ state: 'stale_fence', sourceNodeId, fencingToken, currentFencingToken: previousFence });
       const next = sourceSequence === undefined || sourceSequence === null ? previous + 1 : sourceSequence;
       if (!Number.isInteger(next) || next < 1) throw new TypeError('sourceSequence must be a positive integer');
       if (next <= previous) return freeze({ state: 'stale', sourceNodeId, sourceSequence: next });
@@ -136,6 +139,7 @@ export class DurableEventLog {
       retainedEvents: this.#events.length,
       seenEventIds: this.#seen.size,
       sourceSequences: Object.fromEntries(this.#sourceSequences),
+      sourceFencingTokens: Object.fromEntries(this.#sourceFences),
       initialized: this.#initialized,
     });
   }
@@ -153,6 +157,7 @@ export class DurableEventLog {
         this.#events = [];
         this.#seen = new Set();
         this.#sourceSequences = new Map();
+        this.#sourceFences = new Map();
         this.#sequence = 0;
         return;
       }
@@ -172,6 +177,16 @@ export class DurableEventLog {
         events.length = 0;
         events.push(...record.events);
         latestSequence = record.sequence;
+        if (record.sourceSequences) {
+          for (const [nodeId, sequence] of Object.entries(record.sourceSequences)) {
+            if (!Number.isInteger(sequence) || sequence < 0) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid source sequence cursor for ${nodeId}`);
+          }
+        }
+        if (record.sourceFencingTokens) {
+          for (const [nodeId, token] of Object.entries(record.sourceFencingTokens)) {
+            if (!Number.isInteger(token) || token < 0) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid source fencing cursor for ${nodeId}`);
+          }
+        }
       } else if (record?.op === 'append') {
         validatePersistedEvent(record.event, index + 1);
         if (record.event.sequence <= latestSequence) {
@@ -186,12 +201,16 @@ export class DurableEventLog {
     this.#events = events.slice(-this.#maxEvents);
     this.#seen = new Set(this.#events.map((event) => event.id));
     this.#sourceSequences = new Map();
+    this.#sourceFences = new Map();
     for (const event of this.#events) {
       const previous = this.#sourceSequences.get(event.sourceNodeId) ?? 0;
       if (event.sourceSequence <= previous) {
         throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Non-monotonic source sequence for ${event.sourceNodeId}`);
       }
       this.#sourceSequences.set(event.sourceNodeId, event.sourceSequence);
+      const fence = this.#sourceFences.get(event.sourceNodeId) ?? 0;
+      if (event.fencingToken < fence) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Non-monotonic fencing token for ${event.sourceNodeId}`);
+      this.#sourceFences.set(event.sourceNodeId, event.fencingToken);
     }
     this.#sequence = latestSequence;
   }
@@ -211,6 +230,7 @@ export class DurableEventLog {
     this.#events.push(event);
     this.#seen.add(event.id);
     this.#sourceSequences.set(event.sourceNodeId, event.sourceSequence);
+    this.#sourceFences.set(event.sourceNodeId, event.fencingToken);
     this.#sequence = event.sequence;
     if (this.#events.length > this.#maxEvents) this.#events.splice(0, this.#events.length - this.#maxEvents);
     while (this.#seen.size > this.#maxSeen) {
@@ -231,6 +251,8 @@ export class DurableEventLog {
       op: 'snapshot',
       schemaVersion: SCHEMA_VERSION,
       sequence: this.#sequence,
+      sourceSequences: Object.fromEntries(this.#sourceSequences),
+      sourceFencingTokens: Object.fromEntries(this.#sourceFences),
       events: this.#events.map(clone),
     };
     const handle = await fs.open(temporary, 'w');
@@ -300,6 +322,8 @@ function validateSnapshotRecord(record, line) {
     throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid snapshot at line ${line}`);
   }
   let previous = 0;
+  if (record.sourceSequences !== undefined && (typeof record.sourceSequences !== 'object' || Array.isArray(record.sourceSequences))) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid source sequences at line ${line}`);
+  if (record.sourceFencingTokens !== undefined && (typeof record.sourceFencingTokens !== 'object' || Array.isArray(record.sourceFencingTokens))) throw eventLogError('EVENT_LOG_REPLAY_FAILED', `Invalid source fencing tokens at line ${line}`);
   for (const event of record.events) {
     validatePersistedEvent(event, line);
     if (event.sequence <= previous) throw eventLogError('EVENT_LOG_REPLAY_FAILED', 'Snapshot event sequences are not monotonic');

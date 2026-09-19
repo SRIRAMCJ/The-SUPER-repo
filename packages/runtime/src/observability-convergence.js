@@ -103,6 +103,10 @@ export class ObservabilityConvergenceKernel {
       if (comparison.state === 'divergent' && comparison.remoteSourceSequence !== undefined && finalComparison.remoteSourceSequence === undefined && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
         finalComparison.state = 'divergent';
         finalComparison.reason = 'REPAIR_INCOMPLETE';
+        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
+        finalComparison.toSourceSequence = comparison.toSourceSequence;
+        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
+        finalComparison.toSourceSequence = comparison.toSourceSequence;
       }
       if (finalComparison.state === 'converged' && comparison.state === 'divergent' && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
         finalComparison.state = 'divergent';

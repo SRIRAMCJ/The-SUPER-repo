@@ -78,7 +78,10 @@ export class ObservabilityConvergenceKernel {
         this.#state = CONVERGENCE_STATES.blocked;
         return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison });
       }
-      if (typeof this.#remote.repair !== 'function') {\n        this.#state = CONVERGENCE_STATES.failed;\n        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, error: { code: 'REPAIR_UNAVAILABLE', message: 'remote repair is required for divergent state' } });\n      }\n      const repair = await this.#remote.repair({
+      if (typeof this.#remote.repair !== 'function') {
+        this.#state = CONVERGENCE_STATES.failed;
+        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, error: { code: 'REPAIR_UNAVAILABLE', message: 'remote repair is required for divergent state' } });
+      }\n      const repair = await this.#remote.repair({
         sourceNodeId,
         fromSourceSequence: comparison.fromSourceSequence,
         toSourceSequence: comparison.toSourceSequence,

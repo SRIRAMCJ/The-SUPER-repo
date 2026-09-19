@@ -67,7 +67,7 @@ export class ObservabilityConvergenceKernel {
       const local = this.#local.snapshot();
       const comparison = compareSnapshots(local, remote, sourceNodeId);
       if (comparison.state === 'converged') {
-        if (comparison.digest && remote.digest && comparison.digest !== remote.digest) {
+        if (comparison.digest && comparison.remoteDigest && comparison.digest !== comparison.remoteDigest) {
           this.#state = CONVERGENCE_STATES.divergent;
           return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: { ...comparison, reason: 'DIGEST_DIVERGENCE' } });
         }
@@ -138,7 +138,7 @@ function compareSnapshots(local, remote, sourceNodeId) {
     return { state: 'blocked', reason: 'FENCING_DIVERGENCE', localFencingToken: localValue.fencingToken, remoteFencingToken: remoteValue.fencingToken, fromSourceSequence: 1, toSourceSequence: 0 };
   }
   if (localValue.sourceSequence === remoteValue.sourceSequence && localValue.eventSequence === remoteValue.eventSequence) {
-    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken, digest: localValue.digest ?? null, expectedDigest: remoteValue.digest ?? null };
+    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken, digest: localValue.digest ?? null, remoteDigest: remoteValue.digest ?? null, expectedDigest: remoteValue.digest ?? null };
   }
   const from = Math.min(localValue.sourceSequence, remoteValue.sourceSequence) + 1;
   const to = Math.max(localValue.sourceSequence, remoteValue.sourceSequence);

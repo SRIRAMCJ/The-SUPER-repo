@@ -33,7 +33,13 @@ export class InMemoryRemoteExecutionTransport {
 
   unregisterWorker(workerId) {
     this.#workers.delete(workerId); this.#registry?.remove(workerId);
-    for (const [id, lease] of this.#leases) if (lease.workerId === workerId && !TERMINAL.has(lease.status)) this.#leases.delete(id);
+    const now = this.#clock();
+    for (const [id, lease] of this.#leases) {
+      if (lease.workerId !== workerId || TERMINAL.has(lease.status)) continue;
+      lease.status = 'failed'; lease.completedAt = now; lease.error = { code: 'WORKER_UNREGISTERED', message: 'Remote worker was unregistered', retryable: true };
+      if (this.#leaseManager) this.#leaseManager.fence(lease.leaseId, 'worker unregistered', lease.fencingToken);
+      this.#leases.set(id, lease);
+    }
   }
 
   listWorkers() {

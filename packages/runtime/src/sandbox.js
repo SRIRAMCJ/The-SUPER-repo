@@ -68,11 +68,12 @@ export class ExecutionSandbox {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
-    let stderr = '';
+    let stdoutChunks = [];
+    let stderrChunks = [];
     let outputBytes = 0;
     let outputLimit = false;
     let settled = false;
+    let closed = false;
     let terminationReason = null;
     let timer = null;
     let detach = null;
@@ -83,34 +84,35 @@ export class ExecutionSandbox {
       terminationReason = code;
       try { child.kill('SIGTERM'); } catch {}
       setTimeout(() => { try { if (!closed) child.kill('SIGKILL'); } catch {} }, 100).unref?.();
-      return code;
+      return reason;
     };
 
     if (signal) {
       const abort = () => terminate(signal.reason, 'CANCELLED');
       if (signal.aborted) abort();
-      else { signal.addEventListener('abort', abort, { once: true }); detach = () => signal.removeEventListener('abort', abort); }
+      else {
+        signal.addEventListener('abort', abort, { once: true });
+        detach = () => signal.removeEventListener('abort', abort);
+      }
     }
     timer = setTimeout(() => terminate(new Error('Sandbox execution timed out'), 'TIMED_OUT'), timeoutMs);
 
     const collect = (chunk, target) => {
       if (outputLimit) return;
-      const bytes = Buffer.byteLength(chunk);
-      if (outputBytes + bytes > maxOutputBytes) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (outputBytes + buffer.length > maxOutputBytes) {
         const remaining = Math.max(0, maxOutputBytes - outputBytes);
         if (remaining) {
-          const partial = chunk.subarray ? chunk.subarray(0, remaining) : Buffer.from(chunk).subarray(0, remaining);
-          if (target === 'stdout') stdout += partial.toString();
-          else stderr += partial.toString();
+          const partial = buffer.subarray(0, remaining);
+          (target === 'stdout' ? stdoutChunks : stderrChunks).push(partial);
         }
         outputBytes = maxOutputBytes;
         outputLimit = true;
         terminate(new Error('Sandbox output limit exceeded'), 'OUTPUT_LIMIT');
         return;
       }
-      outputBytes += bytes;
-      if (target === 'stdout') stdout += chunk.toString();
-      else stderr += chunk.toString();
+      outputBytes += buffer.length;
+      (target === 'stdout' ? stdoutChunks : stderrChunks).push(buffer);
     };
 
     child.stdout.on('data', (chunk) => collect(chunk, 'stdout'));
@@ -121,9 +123,13 @@ export class ExecutionSandbox {
         if (timer) clearTimeout(timer);
         detach?.();
         if (!settled) settled = true;
-        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, startedAt, { stdout: decode(stdoutChunks), stderr: decode(stderrChunks) })));
+        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, startedAt, {
+          stdout: decode(stdoutChunks),
+          stderr: decode(stderrChunks),
+        })));
       });
       child.once('close', (exitCode, signalName) => {
+        closed = true;
         if (timer) clearTimeout(timer);
         detach?.();
         const completedAt = this.clock().toISOString();
@@ -145,8 +151,8 @@ export class ExecutionSandbox {
           policy: structuredClone(policy),
           exitCode,
           signal: signalName,
-          stdout,
-          stderr,
+          stdout: decode(stdoutChunks),
+          stderr: decode(stderrChunks),
           ...(error ? { error } : {}),
         }));
       });
@@ -190,7 +196,7 @@ function validateCwd(cwd) {
 
 function buildEnvironment(overrides, policy) {
   if (overrides !== undefined && (!overrides || typeof overrides !== 'object' || Array.isArray(overrides))) throw new TypeError('env must be an object');
-  const base = policy.environment === 'inherit' ? process.env : Object.fromEntries([...SAFE_ENV].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
+  const base = policy.environment === 'inherit' ? { ...process.env } : Object.fromEntries([...SAFE_ENV].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
   for (const [key, value] of Object.entries(overrides ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw codeError('INVALID_ENVIRONMENT_KEY', `Invalid environment key: ${key}`);
     if (typeof value !== 'string') throw codeError('INVALID_ENVIRONMENT_VALUE', `Environment value must be a string: ${key}`);
@@ -199,19 +205,39 @@ function buildEnvironment(overrides, policy) {
   return base;
 }
 
-function decode(chunks) {\n  return Buffer.concat(chunks).toString('utf8');\n}\n\nfunction normalizePositive(value, name) {
+function decode(chunks) {
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function normalizePositive(value, name) {
   if (!Number.isFinite(value) || value < 1) throw new TypeError(`${name} must be a positive finite number`);
   return value;
 }
+
 function normalizePositiveInteger(value, name) {
   if (!Number.isInteger(value) || value < 1) throw new TypeError(`${name} must be a positive integer`);
   return value;
 }
-function codeError(code, message) { const error = new Error(message); error.code = code; return error; }
-function failure(executionId, code, message, startedAt = null, output = {}) {
-  return { schemaVersion: SANDBOX_SCHEMA_VERSION, executionId, status: 'failed', startedAt, completedAt: new Date().toISOString(), error: { code, message }, ...output };
+
+function codeError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
-function inferTerminal(terminationReason, signalName, exitCode) {
+
+function failure(executionId, code, message, startedAt = null, output = {}) {
+  return {
+    schemaVersion: SANDBOX_SCHEMA_VERSION,
+    executionId,
+    status: 'failed',
+    startedAt,
+    completedAt: new Date().toISOString(),
+    error: { code, message },
+    ...output,
+  };
+}
+
+function inferTerminal(terminationReason) {
   if (terminationReason === 'CANCELLED') return 'cancelled';
   if (terminationReason === 'TIMED_OUT') return 'timed_out';
   return 'failed';

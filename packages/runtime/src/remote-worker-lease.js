@@ -25,9 +25,9 @@ export class RemoteWorkerLeaseManager {
   validate(leaseId, fencingToken, workerId = null) {
     const lease=this.#leases.get(leaseId);
     if(!lease) return this.#result('invalid',{code:'LEASE_NOT_FOUND',leaseId});
+    if(lease.fencingToken!==fencingToken) return this.#result('invalid',{code:'STALE_FENCING_TOKEN',lease});
     if(lease.status!=='active') return this.#result('invalid',{code:'LEASE_NOT_ACTIVE',lease});
     if(this.#clock()>=lease.expiresAt) return this.#result('invalid',{code:'LEASE_EXPIRED',lease});
-    if(lease.fencingToken!==fencingToken) return this.#result('invalid',{code:'STALE_FENCING_TOKEN',lease});
     if(workerId !== null && lease.workerId!==workerId) return this.#result('invalid',{code:'LEASE_WORKER_MISMATCH',lease});
     return this.#result('valid',{lease});
   }

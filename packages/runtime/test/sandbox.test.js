@@ -99,3 +99,20 @@ test('ExecutionSandbox', async (t) => {
     assert.equal(conflict.error.code, 'EXECUTION_CONFLICT');
   });
 });
+
+
+test('ExecutionSandbox preserves the original record when an execution id is reused', async () => {
+  const sandbox = new ExecutionSandbox({ idFactory: () => 'stable-id' });
+  const first = await sandbox.execute(node, ['-e', 'process.stdout.write("original")']);
+  const conflict = await sandbox.execute(node, ['-e', 'process.stdout.write("replacement")'], { executionId: first.executionId });
+  assert.equal(conflict.error.code, 'EXECUTION_CONFLICT');
+  assert.equal(sandbox.getExecution(first.executionId).stdout, 'original');
+});
+
+test('ExecutionSandbox records spawn failures as terminal failed executions', async () => {
+  const sandbox = new ExecutionSandbox({ idFactory: () => 'spawn-failure' });
+  const result = await sandbox.execute('super-command-that-does-not-exist', []);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'SPAWN_FAILED');
+  assert.equal(result.command, 'super-command-that-does-not-exist');
+});

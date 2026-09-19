@@ -70,6 +70,7 @@ test('heartbeat failure reassigns an active execution and recovery resumes it on
   const monitor = new RemoteWorkerHeartbeatMonitor({ registry, leaseManager: leases, failoverController: failover, clock: () => now, timeoutMs: 30_000 });
 
   const pending = backend.execute({ executionId: 'exec-heartbeat-recovery', input: { command: 'node', args: [] }, capability: { id: 'runtime.execute' } });
+  transport.heartbeat('worker-b');
   assert.equal(scheduler.current('exec-heartbeat-recovery').workerId, 'worker-a');
   now += 31_000;
   const sweep = await monitor.sweep();

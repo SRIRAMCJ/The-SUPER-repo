@@ -41,5 +41,3 @@ function normalizeResult(executionId, backend, result) {
 }
 function failed(executionId, code, message) { return { executionId, status: 'failed', backend: 'remote', error: { code, message, retryable: false } }; }
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }
-
-// Contract boundary: transport implementations remain provider-neutral.

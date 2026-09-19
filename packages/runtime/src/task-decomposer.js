@@ -62,6 +62,7 @@ function normalizeTask(task, index) {
     description: typeof task.description === 'string' ? task.description.trim() : '',
     dependsOn: [...new Set((task.dependsOn ?? []).map((value) => value.trim()))].sort(),
     agent: task.agent ?? null,
+    capabilities: Object.freeze(Array.isArray(task.capabilities) ? [...new Set(task.capabilities.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))].sort() : []),
     priority: Number.isInteger(task.priority) ? task.priority : 0,
     input: task.input ?? null
   };

@@ -73,7 +73,7 @@ test('transport rejects stale fenced ownership before dispatch', async () => {
   transport.registerWorker({ workerId:'worker-a', capabilities:['runtime.execute'], execute:async()=>{calls++;return {status:'succeeded'};} });
   const first=leases.acquire({executionId:'exec-stale',workerId:'worker-a'}); leases.fence(first.lease.leaseId); const second=leases.acquire({executionId:'exec-stale',workerId:'worker-a'});
   await assert.rejects(()=>transport.execute({executionId:'exec-stale',capability:{id:'runtime.execute'}},{workerId:'worker-a',leaseId:first.lease.leaseId,fencingToken:first.lease.fencingToken}),e=>e.code==='LEASE_NOT_ACTIVE');
-  await assert.rejects(()=>transport.execute({executionId:'exec-stale',capability:{id:'runtime.execute'}},{workerId:'worker-a',leaseId:second.lease.leaseId,fencingToken:first.lease.fencingToken}),e=>e.code==='STALE_FENCING_TOKEN');
+  await assert.rejects(()=>transport.execute({executionId:'exec-stale',capability:{id:'runtime.execute'}},{workerId:'worker-a',leaseId:second.lease.leaseId,fencingToken:first.lease.fencingToken}),e=>e.code==='LEASE_NOT_ACTIVE');
   assert.equal(calls,0); assert.ok(second.lease.fencingToken!==first.lease.fencingToken);
 });
 

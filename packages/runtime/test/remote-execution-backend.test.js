@@ -58,8 +58,6 @@ import { InMemoryRemoteExecutionTransport } from '../src/remote-execution-transp
 test('heartbeat failure reassigns an active execution and recovery resumes it on a live worker', async () => {
   let now = Date.parse('2026-09-20T00:00:00Z');
   const registry = new RemoteWorkerRegistry({ clock: () => new Date(now) });
-  registry.register({ workerId: 'worker-a', capabilities: ['runtime.execute'] });
-  registry.register({ workerId: 'worker-b', capabilities: ['runtime.execute'] });
   const leases = new RemoteWorkerLeaseManager({ clock: () => now, ttlMs: 60_000 });
   const scheduler = new RemoteWorkerScheduler({ registry, leases, clock: () => now });
   const failover = new RemoteWorkerFailoverController({ scheduler });

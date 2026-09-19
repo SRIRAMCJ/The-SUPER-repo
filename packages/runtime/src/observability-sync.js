@@ -21,7 +21,7 @@ export class ObservabilitySyncCoordinator {
 
   constructor({ transport, store, checkpoint = null, clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
     if (!transport || typeof transport.ingest !== 'function' || typeof transport.history !== 'function') throw new TypeError('transport must expose ingest() and history()');
-    if (!store || typeof store.replay !== 'function' || typeof store.snapshot !== 'function') throw new TypeError('store must expose replay() and snapshot()');
+    if (!store || (typeof store.replay !== 'function' && typeof store.replaySource !== 'function') || typeof store.snapshot !== 'function') throw new TypeError('store must expose replay()/replaySource() and snapshot()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     this.#transport = transport;

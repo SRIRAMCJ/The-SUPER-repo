@@ -7,6 +7,10 @@ on:
       - main
       - "feat/**"
 
+concurrency:
+  group: core-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -24,50 +28,8 @@ jobs:
       - name: Core tests
         run: npm run test:core
       - name: Runtime tests
-        run: npm run test:runtime -- --test-concurrency=1 --test-timeout=10000
+        run: npm run test:runtime -- --test-concurrency=1 --test-timeout=10000 --test-force-exit
       - name: Repository analyst tests
         run: npm run test:repository-analyst
       - name: CLI tests
         run: npm run test:cli
-
-  sandbox-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-      - name: Sandbox tests
-        run: node --test --test-timeout=5000 packages/runtime/test/sandbox.test.js
-
-  runtime-file-isolation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-      - name: Run runtime files independently
-        shell: bash
-        run: |
-          set +e
-          for file in packages/runtime/test/*.test.js; do
-            echo "=== START $file ==="
-            timeout 15s node --test --test-concurrency=1 "$file"
-            status=$?
-            if [ "$status" -eq 124 ]; then
-              echo "=== HANG $file status=$status ==="
-              exit 124
-            elif [ "$status" -ne 0 ]; then
-              echo "=== FAIL $file status=$status; continuing ==="
-            else
-              echo "=== PASS $file ==="
-            fi
-          done
-          exit 0

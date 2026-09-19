@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ControlPlaneGateway } from '../src/index.js';
+import { ControlPlaneGateway, RuntimeRequestGuard } from '../src/index.js';
 
 function controlPlane() {
   return {
@@ -98,4 +98,34 @@ test('gateway lifecycle prevents duplicate listeners and closes cleanly', async 
   await assert.rejects(() => gateway.listen({ host: '127.0.0.1', port: 0 }), /already listening/);
   await gateway.close();
   await gateway.close();
+});
+
+
+test('gateway enforces idempotency for mutating commands', async () => {
+  const gateway = new ControlPlaneGateway({
+    controlPlane: controlPlane(),
+    requestGuard: new RuntimeRequestGuard({ maxRequests: 10 }),
+  });
+  const request = {
+    method: 'POST',
+    path: '/commands',
+    headers: { 'x-client-id': 'client-a', 'idempotency-key': 'command-1' },
+    body: { command: 'runtime.health' },
+  };
+  const first = await gateway.handle(request);
+  const replay = await gateway.handle(request);
+  assert.equal(first.status, 200);
+  assert.deepEqual(replay, first);
+});
+
+test('gateway returns 429 when the request guard rate limit is exceeded', async () => {
+  const gateway = new ControlPlaneGateway({
+    controlPlane: controlPlane(),
+    requestGuard: new RuntimeRequestGuard({ maxRequests: 1, windowMs: 60_000 }),
+  });
+  const first = await gateway.handle({ method: 'GET', path: '/health', clientKey: 'client-a' });
+  const second = await gateway.handle({ method: 'GET', path: '/health', clientKey: 'client-a' });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 429);
+  assert.equal(second.body.error.code, 'RATE_LIMITED');
 });

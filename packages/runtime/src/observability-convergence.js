@@ -23,7 +23,7 @@ export class ObservabilityConvergenceKernel {
 
   constructor({ local, remote, integrity = ObservabilityIntegrityKernel, clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
     if (!local || typeof local.snapshot !== 'function') throw new TypeError('local must expose snapshot()');
-    if (!remote || typeof remote.inspect !== 'function' || typeof remote.repair !== 'function') throw new TypeError('remote must expose inspect() and repair()');
+    if (!remote || typeof remote.inspect !== 'function') throw new TypeError('remote must expose inspect()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     if (!integrity || typeof integrity.verifyRange !== 'function') throw new TypeError('integrity must expose verifyRange()');
@@ -78,7 +78,7 @@ export class ObservabilityConvergenceKernel {
         this.#state = CONVERGENCE_STATES.blocked;
         return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison });
       }
-      const repair = await this.#remote.repair({
+      if (typeof this.#remote.repair !== 'function') {\n        this.#state = CONVERGENCE_STATES.failed;\n        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, error: { code: 'REPAIR_UNAVAILABLE', message: 'remote repair is required for divergent state' } });\n      }\n      const repair = await this.#remote.repair({
         sourceNodeId,
         fromSourceSequence: comparison.fromSourceSequence,
         toSourceSequence: comparison.toSourceSequence,

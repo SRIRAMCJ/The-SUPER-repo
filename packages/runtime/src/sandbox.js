@@ -32,7 +32,7 @@ export class ExecutionSandbox {
 
   async execute(command, args = [], options = {}) {
     const executionId = options.executionId ?? this.idFactory();
-    if (this.#records.has(executionId)) return this.#record(failure(executionId, 'EXECUTION_CONFLICT', 'Sandbox execution id already exists', this.clock));
+    if (this.#records.has(executionId)) return failure(executionId, 'EXECUTION_CONFLICT', 'Sandbox execution id already exists', this.clock);
 
     try {
       validateCommand(command, args);
@@ -121,11 +121,21 @@ export class ExecutionSandbox {
       child.once('error', (error) => {
         if (timer) clearTimeout(timer);
         detach?.();
-        if (!settled) settled = true;
-        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, this.clock, {
+        if (settled) return;
+        settled = true;
+        resolve(this.#record({
+          schemaVersion: SANDBOX_SCHEMA_VERSION,
+          executionId,
+          status: 'failed',
+          startedAt,
+          completedAt: this.clock().toISOString(),
+          command,
+          args: structuredClone(args),
+          policy: structuredClone(policy),
           stdout: decode(stdoutChunks),
           stderr: decode(stderrChunks),
-        })));
+          error: { code: 'SPAWN_FAILED', message: error.message },
+        }));
       });
       child.once('close', (exitCode, signalName) => {
         closed = true;
@@ -137,7 +147,13 @@ export class ExecutionSandbox {
           : exitCode === 0 ? 'succeeded' : 'failed';
         const error = status === 'succeeded' ? null : {
           code: outputLimit ? 'OUTPUT_LIMIT' : status === 'cancelled' ? 'CANCELLED' : status === 'timed_out' ? 'TIMED_OUT' : 'PROCESS_EXIT',
-          message: outputLimit ? 'Sandbox output limit exceeded' : `Sandbox process exited with code ${exitCode}${signalName ? ` (${signalName})` : ''}`,
+          message: outputLimit
+  ? 'Sandbox output limit exceeded'
+  : status === 'cancelled'
+    ? 'Sandbox execution cancelled'
+    : status === 'timed_out'
+      ? 'Sandbox execution timed out'
+      : `Sandbox process exited with code ${exitCode}${signalName ? ` (${signalName})` : ''}`,
         };
         resolve(this.#record({
           schemaVersion: SANDBOX_SCHEMA_VERSION,

@@ -21,6 +21,18 @@ function runtime(handler, options = {}) {
   return new ToolRuntime({ registry, ...options });
 }
 
+test('ToolRuntime uses the injected clock for terminal failure records', async () => {
+  let now = new Date('2026-01-01T00:00:00.000Z');
+  const rt = runtime(async () => { throw new Error('boom'); }, { clock: () => now, idFactory: () => 'clock-failure' });
+  const result = await rt.execute('tool/test');
+  assert.equal(result.error.code, 'TOOL_FAILED');
+  assert.equal(result.completedAt, now.toISOString());
+  now = new Date('2026-01-01T00:00:01.000Z');
+  const invalid = await rt.execute('tool/test', null, { executionId: 'clock-invalid' });
+  assert.equal(invalid.error.code, 'INVALID_INPUT');
+  assert.equal(invalid.completedAt, now.toISOString());
+});
+
 test('ToolRuntime executes registered tools with correlation and signal', async () => {
   let calls = 0;
   const tool = async (input, context) => {
@@ -37,10 +49,10 @@ test('ToolRuntime executes registered tools with correlation and signal', async 
 
 test('ToolRuntime rejects unavailable capabilities and non-tools', async () => {
   const registry = new CapabilityRegistry();
-  const rt = new ToolRuntime({ registry, idFactory: () => 'exec-2' });
+  const rt = new ToolRuntime({ registry, idFactory: (() => { let i = 0; return () => `exec-${++i}`; })() });
   assert.deepEqual((await rt.execute('missing')).error, { code: 'TOOL_UNAVAILABLE', message: 'Tool capability is unavailable' });
   registry.register(manifest({ id: 'model/test', kind: 'model' }), () => undefined);
-  assert.deepEqual((await rt.execute('model/test')).error, { code: 'TOOL_UNAVAILABLE', message: 'Tool capability is unavailable' });
+  assert.deepEqual((await rt.execute('model/test')).error, { code: 'INVALID_TOOL_KIND', message: 'Capability is not a tool: model/test' });
 });
 
 test('ToolRuntime enforces policy before invoking the handler', async () => {

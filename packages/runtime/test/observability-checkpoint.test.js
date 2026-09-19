@@ -14,7 +14,7 @@ test('checkpoint authority commits monotonically and rejects stale fences', () =
 
 test('checkpoint authority detects same-cursor conflicts and validates checkpoints', () => {
   const authority = new ObservabilityCheckpointAuthority({ idFactory: () => 'id' });
-  authority.commit({ nodeId:'n1', sourceNodeId:'source-a', sourceSequence:4, eventSequence:40, fencingToken:3, digest:'abc' });
+  authority.commit({ nodeId:'n1', sourceNodeId:'source-a', sourceSequence:4, eventSequence:40, fencingToken:3, digest:'a'.repeat(64) });
   assert.equal(authority.commit({ nodeId:'n1', sourceNodeId:'source-a', sourceSequence:4, eventSequence:39, fencingToken:3 }).state, 'conflict');
   assert.equal(authority.validate({ sourceNodeId:'source-a', sourceSequence:4, fencingToken:3, eventSequence:40 }).valid, true);
   assert.equal(authority.validate({ sourceNodeId:'source-a', sourceSequence:3, fencingToken:3 }).code, 'CHECKPOINT_STALE_SOURCE');

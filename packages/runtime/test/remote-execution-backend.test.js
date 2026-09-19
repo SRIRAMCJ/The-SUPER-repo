@@ -47,3 +47,11 @@ test('remote backend validates command and arguments before dispatch', async () 
   assert.equal(invalidArgs.error.code, 'INVALID_ARGUMENTS');
   assert.equal(calls, 0);
 });
+
+
+import { RemoteWorkerRegistry } from '../src/remote-worker-registry.js';
+import { RemoteWorkerLeaseManager } from '../src/remote-worker-lease.js';
+import { RemoteWorkerScheduler } from '../src/remote-worker-scheduler.js';
+import { InMemoryRemoteExecutionTransport } from '../src/remote-execution-transport.js';
+
+test('remote backend integrates scheduler, transport lease ownership, and failover end to end', async()=>{const registry=new RemoteWorkerRegistry();const leases=new RemoteWorkerLeaseManager();const scheduler=new RemoteWorkerScheduler({registry,leases});const transport=new InMemoryRemoteExecutionTransport({workerRegistry:registry,leaseManager:leases});let firstCalls=0;transport.registerWorker({workerId:'worker-a',capabilities:['runtime.execute'],execute:async()=>{firstCalls++;throw Object.assign(new Error('worker lost'),{code:'WORKER_LOST',retryable:true});}});transport.registerWorker({workerId:'worker-b',capabilities:['runtime.execute'],execute:async(request,ctx)=>({status:'succeeded',output:{worker:ctx.workerId,executionId:request.executionId}})});const backend=new RemoteExecutionBackend({transport,scheduler,maxRecoveryAttempts:2});const result=await backend.execute({executionId:'exec-e2e-failover',input:{command:'node',args:[]},capability:{id:'runtime.execute'}});assert.equal(firstCalls,1);assert.equal(result.status,'succeeded');assert.equal(result.workerId,'worker-b');assert.equal(result.attempt,2);assert.equal(result.executionId,'exec-e2e-failover');const leasesForExecution=leases.list().filter(x=>x.executionId==='exec-e2e-failover');assert.equal(leasesForExecution.length,2);assert.equal(leasesForExecution[0].status,'fenced');assert.equal(leasesForExecution[1].status,'released');});

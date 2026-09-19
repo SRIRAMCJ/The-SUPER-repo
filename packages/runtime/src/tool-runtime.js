@@ -35,7 +35,7 @@ export class ToolRuntime {
     const startedAt = this.clock().toISOString();
     try {
       const value = await entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
-      if (controller.signal.aborted) return this.#record(failure(isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED', errorMessage(controller.signal.reason), executionId, startedAt));
+      if (controller.signal.aborted) return this.#record(failure(isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED', errorMessage(controller.signal.reason), executionId, startedAt, this.clock().toISOString()));
       return this.#record(success(executionId, startedAt, this.clock().toISOString(), value));
     } catch (error) {
       const code = controller.signal.aborted ? (isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED') : 'TOOL_FAILED';

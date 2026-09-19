@@ -93,7 +93,7 @@ export class RuntimeRequestGuard {
     return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey: null, fingerprint: null, identity });
   }
 
-  complete(admission, response) {
+  async complete(admission, response) {
     if (!admission || admission.decision !== 'accepted' || !admission.cacheKey) return false;
     this.#purge();
     const now = this.clock();

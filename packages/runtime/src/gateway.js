@@ -69,7 +69,7 @@ export class ControlPlaneGateway {
     } catch (error) { return failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error)); }
   }
 
-  listen({ host = '127.0.0.1', port = 0 } = {}) {
+  async listen({ host = '127.0.0.1', port = 0 } = {}) {
     if (this.server) throw new Error('ControlPlaneGateway is already listening');
     this.server = createServer(async (req, res) => {
       try {

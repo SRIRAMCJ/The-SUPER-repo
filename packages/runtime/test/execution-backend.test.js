@@ -85,7 +85,7 @@ test('ExecutionEngine propagates cancellation into the sandbox backend', async (
   const backends = new ExecutionBackendRegistry();
   backends.register('sandbox', new SandboxExecutionBackend({ sandbox }));
 
-  const engine = new ExecutionEngine({ registry: capabilities, backends });
+  const engine = new ExecutionEngine({ registry: capabilities, backends, idFactory: () => 'engine-cancel-1' });
   const execution = engine.execute('command.wait', {
     command: node,
     args: ['-e', 'setInterval(() => {}, 1000)'],

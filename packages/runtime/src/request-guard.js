@@ -93,12 +93,12 @@ export class RuntimeRequestGuard {
     return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey: null, fingerprint: null, identity });
   }
 
-  async complete(admission, response) {
+  complete(admission, response) {
     if (!admission || admission.decision !== 'accepted' || !admission.cacheKey) return false;
     this.#purge();
     const now = this.clock();
     const record = freeze({ schemaVersion: SCHEMA_VERSION, fingerprint: admission.fingerprint, response: response === undefined ? null : response, createdAt: now, expiresAt: now + this.idempotencyTtlMs });
-    if (this.idempotencyStore) await this.idempotencyStore.put(admission.cacheKey, record, { expiresAt: record.expiresAt });
+    if (this.idempotencyStore) return this.idempotencyStore.put(admission.cacheKey, record, { expiresAt: record.expiresAt }).then(() => true);
     else this.#idempotency.set(admission.cacheKey, record);
     while (this.#idempotency.size > this.maxIdempotencyRecords) this.#idempotency.delete(this.#idempotency.keys().next().value);
     return true;

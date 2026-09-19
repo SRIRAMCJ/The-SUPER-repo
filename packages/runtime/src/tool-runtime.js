@@ -35,7 +35,7 @@ export class ToolRuntime {
     const startedAt = this.clock().toISOString();
     try {
       const value = await entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
-      if (controller.signal.aborted) return this.#record(failure(isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED', errorMessage(controller.signal.reason), executionId, startedAt));
+      if (controller.signal.aborted) return this.#record(failure(isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED', errorMessage(controller.signal.reason), executionId, startedAt, this.clock().toISOString()));
       return this.#record(success(executionId, startedAt, this.clock().toISOString(), value));
     } catch (error) {
       const code = controller.signal.aborted ? (isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED') : 'TOOL_FAILED';
@@ -54,7 +54,7 @@ export class ToolRuntime {
 }
 
 function success(executionId, startedAt, completedAt, output) { return { schemaVersion: SCHEMA_VERSION, executionId, status: 'succeeded', startedAt, completedAt, output: structuredClone(output) }; }
-function failure(code, message, executionId, startedAt = null, completedAt = new Date().toISOString()) { return { schemaVersion: SCHEMA_VERSION, executionId, status: code === 'CANCELLED' ? 'cancelled' : code === 'TIMED_OUT' ? 'timed_out' : 'failed', error: { code, message }, startedAt, completedAt }; }
+function failure(code, message, executionId, startedAt = null, completedAt = null) { return { schemaVersion: SCHEMA_VERSION, executionId, status: code === 'CANCELLED' ? 'cancelled' : code === 'TIMED_OUT' ? 'timed_out' : 'failed', error: { code, message }, startedAt, completedAt }; }
 function normalizeTimeout(value) { if (value === undefined || value === null) return null; if (!Number.isFinite(value) || value < 1) throw new TypeError('timeoutMs must be a positive finite number'); return value; }
 function isTimeout(reason) { return reason instanceof Error && /timed out/i.test(reason.message); }
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }

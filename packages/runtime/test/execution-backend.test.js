@@ -91,7 +91,7 @@ test('ExecutionEngine propagates cancellation into the sandbox backend', async (
     args: ['-e', 'setInterval(() => {}, 1000)'],
   });
 
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 100 && !engine.cancellation?.has?.('engine-cancel-1'); attempt += 1) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(engine.cancel('engine-cancel-1', 'operator cancelled'), true);
 
   const result = await execution;

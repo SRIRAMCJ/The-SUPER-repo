@@ -79,3 +79,14 @@ test('transport rejects stale fenced ownership before dispatch', async () => {
 
 
 test('transport fences active execution ownership when a worker is unregistered',async()=>{const registry=new RemoteWorkerRegistry();const leases=new RemoteWorkerLeaseManager();const transport=new InMemoryRemoteExecutionTransport({workerRegistry:registry,leaseManager:leases});let release;const gate=new Promise(resolve=>{release=resolve;});transport.registerWorker({workerId:'worker-dead',capabilities:['runtime.execute'],execute:async()=>{await gate;return {status:'succeeded'};}});const pending=transport.execute({executionId:'exec-unregister',capability:{id:'runtime.execute'}});await new Promise(resolve=>setImmediate(resolve));const remote=transport.inspect('rex-1');assert.equal(remote.workerId,'worker-dead');transport.unregisterWorker('worker-dead');release();await assert.rejects(()=>pending,e=>e.code==='STALE_FENCING_TOKEN');assert.equal(leases.get(remote.leaseId).status,'fenced');});
+
+test('transport fails closed when scheduler-selected worker lacks the requested capability', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  transport.registerWorker({ workerId: 'worker-other', capabilities: ['runtime.other'], execute: async () => ({ status: 'succeeded' }) });
+  await assert.rejects(
+    () => transport.execute({ executionId: 'exec-capability-mismatch', capability: { id: 'runtime.execute' } }, { workerId: 'worker-other' }),
+    error => error.code === 'NO_HEALTHY_WORKER' && error.retryable === true,
+  );
+});

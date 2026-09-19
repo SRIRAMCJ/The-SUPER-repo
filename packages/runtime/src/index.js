@@ -59,3 +59,4 @@ export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';
 export { ExecutionSandbox, SANDBOX_SCHEMA_VERSION, SANDBOX_TERMINAL_STATES } from './sandbox.js';
+export { ExecutionBackendRegistry, SandboxExecutionBackend, EXECUTION_BACKEND_SCHEMA_VERSION } from './execution-backend.js';

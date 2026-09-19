@@ -37,10 +37,10 @@ test('ToolRuntime executes registered tools with correlation and signal', async 
 
 test('ToolRuntime rejects unavailable capabilities and non-tools', async () => {
   const registry = new CapabilityRegistry();
-  const rt = new ToolRuntime({ registry, idFactory: () => 'exec-2' });
+  const rt = new ToolRuntime({ registry, idFactory: (() => { let i = 0; return () => `exec-${++i}`; })() });
   assert.deepEqual((await rt.execute('missing')).error, { code: 'TOOL_UNAVAILABLE', message: 'Tool capability is unavailable' });
   registry.register(manifest({ id: 'model/test', kind: 'model' }), () => undefined);
-  assert.deepEqual((await rt.execute('model/test')).error, { code: 'TOOL_UNAVAILABLE', message: 'Tool capability is unavailable' });
+  assert.deepEqual((await rt.execute('model/test')).error, { code: 'INVALID_TOOL_KIND', message: 'Capability is not a tool: model/test' });
 });
 
 test('ToolRuntime enforces policy before invoking the handler', async () => {

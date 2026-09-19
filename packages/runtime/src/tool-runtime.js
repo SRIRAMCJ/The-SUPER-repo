@@ -39,7 +39,7 @@ export class ToolRuntime {
       return this.#record(success(executionId, startedAt, this.clock().toISOString(), value));
     } catch (error) {
       const code = controller.signal.aborted ? (isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED') : 'TOOL_FAILED';
-      return this.#record(failure(code, errorMessage(error), executionId, startedAt));
+      return this.#record(failure(code, errorMessage(error), executionId, startedAt, this.clock().toISOString()));
     } finally { if (timer) clearTimeout(timer); detach?.(); }
   }
 

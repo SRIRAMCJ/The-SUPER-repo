@@ -21,6 +21,18 @@ function runtime(handler, options = {}) {
   return new ToolRuntime({ registry, ...options });
 }
 
+test('ToolRuntime uses the injected clock for terminal failure records', async () => {
+  let now = new Date('2026-01-01T00:00:00.000Z');
+  const rt = runtime(async () => { throw new Error('boom'); }, { clock: () => now, idFactory: () => 'clock-failure' });
+  const result = await rt.execute('tool/test');
+  assert.equal(result.error.code, 'TOOL_FAILED');
+  assert.equal(result.completedAt, now.toISOString());
+  now = new Date('2026-01-01T00:00:01.000Z');
+  const invalid = await rt.execute('tool/test', null, { executionId: 'clock-invalid' });
+  assert.equal(invalid.error.code, 'INVALID_INPUT');
+  assert.equal(invalid.completedAt, now.toISOString());
+});
+
 test('ToolRuntime executes registered tools with correlation and signal', async () => {
   let calls = 0;
   const tool = async (input, context) => {

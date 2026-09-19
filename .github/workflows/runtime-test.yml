@@ -6,12 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: runtime-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -20,7 +25,7 @@ jobs:
       - name: Run core tests
         run: npm run test:core
       - name: Run runtime tests
-        run: npm run test:runtime
+        run: npm run test:runtime -- --test-concurrency=1 --test-timeout=10000 --test-force-exit
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

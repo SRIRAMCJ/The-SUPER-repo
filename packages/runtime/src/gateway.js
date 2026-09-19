@@ -32,11 +32,13 @@ export class ControlPlaneGateway {
     if (admission.decision === 'denied') return failure(admission.error.code === 'RATE_LIMITED' ? 429 : admission.error.code === 'BODY_TOO_LARGE' ? 413 : 400, admission.error.code, admission.error.message, admission.retryAfterMs);
     if (admission.decision === 'replay') return admission.response;
     if (admission.decision === 'in_progress') return failure(409, 'IDEMPOTENCY_IN_PROGRESS', 'A request with this idempotency key is already in progress', admission.retryAfterMs);
-    let authorized = false;
-    try { authorized = await this.authorize({ method, path: route, request }); } catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
-    if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
 
     try {
+      let authorized = false;
+      try { authorized = await this.authorize({ method, path: route, request }); }
+      catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
+      if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
+
       if (method === 'GET' && route === '/health') return ok(await this.controlPlane.getHealth());
       if (method === 'GET' && route === '/metrics') return ok(this.controlPlane.observability.getMetrics());
       if (method === 'GET' && route === '/traces') return ok(this.controlPlane.observability.getTraces(queryFilter(parsed.searchParams)));
@@ -52,23 +54,22 @@ export class ControlPlaneGateway {
         if (!body || typeof body !== 'object' || Array.isArray(body)) return failure(400, 'INVALID_BODY', 'Command body must be an object');
         if (typeof body.command !== 'string' || !body.command.trim()) return failure(400, 'INVALID_INPUT', 'command must be a non-empty string');
         const result = await this.commands.execute(body.command, body.input ?? {}, { correlationId: body.correlationId, request });
-        const response = result.ok ? ok(result, 200) : commandFailure(result);
-        await this.requestGuard.complete(admission, response);
-        return response;
+        return result.ok ? ok(result, 200) : commandFailure(result);
       }
       if (method === 'POST' && /^\/executions\/[^/]+\/cancel$/.test(route)) {
         const executionId = decodeURIComponent(route.split('/')[2]);
         const body = request.body === undefined ? {} : request.body;
         if (body !== null && typeof body !== 'object') return failure(400, 'INVALID_BODY', 'Request body must be an object');
         const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason : undefined;
-        const response = ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
-        await this.requestGuard.complete(admission, response);
-        return response;
+        return ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
       }
       return failure(404, 'NOT_FOUND', `Unknown control-plane route: ${method} ${route}`);
-    } catch (error) { return failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error)); }
+    } catch (error) {
+      return failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error));
+    } finally {
+      await this.requestGuard.complete(admission, undefined);
+    }
   }
-
   async listen({ host = '127.0.0.1', port = 0 } = {}) {
     if (this.server) throw new Error('ControlPlaneGateway is already listening');
     this.server = createServer(async (req, res) => {

@@ -138,7 +138,8 @@ function compareSnapshots(local, remote, sourceNodeId) {
   const localCheckpoint = local?.checkpoint?.checkpoints ?? local?.checkpoints ?? {};
   const remoteCheckpoint = remote?.checkpoint?.checkpoints ?? remote?.checkpoints ?? {};
   const localValue = localCheckpoint[sourceNodeId] ?? localCheckpoint[remote.sourceNodeId] ?? localCheckpoint[remote.nodeId] ?? null;
-  const remoteValue = remoteCheckpoint[sourceNodeId] ?? remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? remote.checkpoint ?? null;
+  const directRemoteCheckpoint = remote?.checkpoint && Number.isInteger(remote.checkpoint.sourceSequence) ? remote.checkpoint : null;
+  const remoteValue = remoteCheckpoint[sourceNodeId] ?? remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? directRemoteCheckpoint ?? null;
   if (!localValue || !remoteValue) {
     return { state: 'blocked', reason: 'CHECKPOINT_MISSING', fromSourceSequence: 1, toSourceSequence: 0 };
   }

@@ -75,7 +75,7 @@ test('team synthesizes multiple successful agent outputs', async () => {
   registerAgentPipeline(registry, 'agent/research', 'tool/research');
   registerAgentPipeline(registry, 'agent/security', 'tool/security');
   const result = await team.execute({...base('team/review','team'), task:'review repository', execution:{strategy:'parallel',maxConcurrency:2}, members:['agent/research','agent/security']}, {value:1});
-  assert.equal(result.status, 'succeeded');
+  assert.equal(result.status, 'succeeded', JSON.stringify(result));
   assert.equal(result.synthesis.type, 'team-synthesis');
   assert.equal(result.synthesis.memberCount, 2);
   assert.deepEqual(result.synthesis.successfulMembers, ['agent/research','agent/security']);

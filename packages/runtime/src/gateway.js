@@ -32,42 +32,41 @@ export class ControlPlaneGateway {
     if (admission.decision === 'denied') return failure(admission.error.code === 'RATE_LIMITED' ? 429 : admission.error.code === 'BODY_TOO_LARGE' ? 413 : 400, admission.error.code, admission.error.message, admission.retryAfterMs);
     if (admission.decision === 'replay') return admission.response;
     if (admission.decision === 'in_progress') return failure(409, 'IDEMPOTENCY_IN_PROGRESS', 'A request with this idempotency key is already in progress', admission.retryAfterMs);
+    const finish = async (response) => { await this.requestGuard.complete(admission, response); return response; };
 
     try {
       let authorized = false;
       try { authorized = await this.authorize({ method, path: route, request }); }
-      catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
-      if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
+      catch (error) { return finish(failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error))); }
+      if (!authorized) return finish(failure(403, 'FORBIDDEN', 'Control-plane access denied'));
 
-      if (method === 'GET' && route === '/health') return ok(await this.controlPlane.getHealth());
-      if (method === 'GET' && route === '/metrics') return ok(this.controlPlane.observability.getMetrics());
-      if (method === 'GET' && route === '/traces') return ok(this.controlPlane.observability.getTraces(queryFilter(parsed.searchParams)));
-      if (method === 'GET' && route === '/events') return ok(this.controlPlane.observability.getEvents(queryFilter(parsed.searchParams)));
-      if (method === 'GET' && route === '/executions') return ok(this.controlPlane.getExecutions(executionFilter(parsed.searchParams)));
-      if (method === 'GET' && route === '/evolution') return ok(await this.controlPlane.getEvolution());
-      if (method === 'GET' && route === '/snapshot') return ok(await this.controlPlane.snapshot());
-      if (method === 'GET' && route === '/operations') return ok(this.operations.getOperations());
-      if (method === 'GET' && route === '/diagnostics') return ok(await this.operations.diagnostics());
-      if (method === 'GET' && route === '/commands') return ok(this.commands.list());
+      if (method === 'GET' && route === '/health') return finish(ok(await this.controlPlane.getHealth()));
+      if (method === 'GET' && route === '/metrics') return finish(ok(this.controlPlane.observability.getMetrics()));
+      if (method === 'GET' && route === '/traces') return finish(ok(this.controlPlane.observability.getTraces(queryFilter(parsed.searchParams))));
+      if (method === 'GET' && route === '/events') return finish(ok(this.controlPlane.observability.getEvents(queryFilter(parsed.searchParams))));
+      if (method === 'GET' && route === '/executions') return finish(ok(this.controlPlane.getExecutions(executionFilter(parsed.searchParams))));
+      if (method === 'GET' && route === '/evolution') return finish(ok(await this.controlPlane.getEvolution()));
+      if (method === 'GET' && route === '/snapshot') return finish(ok(await this.controlPlane.snapshot()));
+      if (method === 'GET' && route === '/operations') return finish(ok(this.operations.getOperations()));
+      if (method === 'GET' && route === '/diagnostics') return finish(ok(await this.operations.diagnostics()));
+      if (method === 'GET' && route === '/commands') return finish(ok(this.commands.list()));
       if (method === 'POST' && route === '/commands') {
         const body = request.body === undefined ? {} : request.body;
-        if (!body || typeof body !== 'object' || Array.isArray(body)) return failure(400, 'INVALID_BODY', 'Command body must be an object');
-        if (typeof body.command !== 'string' || !body.command.trim()) return failure(400, 'INVALID_INPUT', 'command must be a non-empty string');
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return finish(failure(400, 'INVALID_BODY', 'Command body must be an object'));
+        if (typeof body.command !== 'string' || !body.command.trim()) return finish(failure(400, 'INVALID_INPUT', 'command must be a non-empty string'));
         const result = await this.commands.execute(body.command, body.input ?? {}, { correlationId: body.correlationId, request });
-        return result.ok ? ok(result, 200) : commandFailure(result);
+        return finish(result.ok ? ok(result, 200) : commandFailure(result));
       }
       if (method === 'POST' && /^\/executions\/[^/]+\/cancel$/.test(route)) {
         const executionId = decodeURIComponent(route.split('/')[2]);
         const body = request.body === undefined ? {} : request.body;
-        if (body !== null && typeof body !== 'object') return failure(400, 'INVALID_BODY', 'Request body must be an object');
+        if (body !== null && typeof body !== 'object') return finish(failure(400, 'INVALID_BODY', 'Request body must be an object'));
         const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason : undefined;
-        return ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
+        return finish(ok(await this.controlPlane.cancelExecution(executionId, reason), 202));
       }
-      return failure(404, 'NOT_FOUND', `Unknown control-plane route: ${method} ${route}`);
+      return finish(failure(404, 'NOT_FOUND', `Unknown control-plane route: ${method} ${route}`));
     } catch (error) {
-      return failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error));
-    } finally {
-      await this.requestGuard.complete(admission, undefined);
+      return finish(failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error)));
     }
   }
   async listen({ host = '127.0.0.1', port = 0 } = {}) {

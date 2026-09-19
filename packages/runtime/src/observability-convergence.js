@@ -99,6 +99,14 @@ export class ObservabilityConvergenceKernel {
       const after = await this.#remote.inspect({ sourceNodeId, signal });
       const finalLocal = this.#local.snapshot();
       const finalComparison = compareSnapshots(finalLocal, after, sourceNodeId);
+      if (comparison.state === 'divergent' && comparison.remoteSourceSequence !== undefined && finalComparison.remoteSourceSequence === undefined && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
+        finalComparison.state = 'divergent';
+        finalComparison.reason = 'REPAIR_INCOMPLETE';
+      }
+      if (finalComparison.state === 'converged' && comparison.state === 'divergent' && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
+        finalComparison.state = 'divergent';
+        finalComparison.reason = 'REPAIR_INCOMPLETE';
+      }
       if (finalComparison.state === 'converged' && finalComparison.expectedDigest) {
         const verified = await this.#remote.verifyDigest?.({ sourceNodeId, expectedDigest: finalComparison.expectedDigest, signal }) ?? { valid: true };
         if (!verified.valid) {

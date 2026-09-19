@@ -17,7 +17,7 @@ function harness({ remoteCheckpoint, repairState = 'succeeded' } = {}) {
 }
 
 test('convergence reports already converged without repair', async () => {
-  const h = harness({ sourceNodeId: 'source-a', sourceSequence: 2, eventSequence: 20, fencingToken: 4 });
+  const h = harness({ remoteCheckpoint: { sourceNodeId: 'source-a', sourceSequence: 2, eventSequence: 20, fencingToken: 4 } });
   const kernel = new ObservabilityConvergenceKernel({ local: h.local, remote: h.remote, idFactory: () => 'c1' });
   const result = await kernel.reconcile({ sourceNodeId: 'source-a' });
   assert.equal(result.state, 'converged');
@@ -25,7 +25,7 @@ test('convergence reports already converged without repair', async () => {
 });
 
 test('convergence repairs sequence divergence and verifies the post-repair state', async () => {
-  const h = harness({ sourceNodeId: 'source-a', sourceSequence: 4, eventSequence: 40, fencingToken: 4 });
+  const h = harness({ remoteCheckpoint: { sourceNodeId: 'source-a', sourceSequence: 4, eventSequence: 40, fencingToken: 4 } });
   let inspected = 0;
   h.remote.inspect = async () => {
     inspected += 1;
@@ -41,7 +41,7 @@ test('convergence repairs sequence divergence and verifies the post-repair state
 });
 
 test('convergence blocks fencing divergence unless forced', async () => {
-  const h = harness({ sourceNodeId: 'source-a', sourceSequence: 4, eventSequence: 40, fencingToken: 5 });
+  const h = harness({ remoteCheckpoint: { sourceNodeId: 'source-a', sourceSequence: 4, eventSequence: 40, fencingToken: 5 } });
   const kernel = new ObservabilityConvergenceKernel({ local: h.local, remote: h.remote, idFactory: (() => { let n = 0; return () => 'c' + (++n); })() });
   const blocked = await kernel.reconcile({ sourceNodeId: 'source-a' });
   assert.equal(blocked.state, 'blocked');
@@ -69,7 +69,7 @@ test('convergence deduplicates concurrent reconciliation and honors cancellation
 });
 
 test('convergence history is bounded and immutable', async () => {
-  const h = harness({ sourceNodeId: 'source-a', sourceSequence: 2, eventSequence: 20, fencingToken: 4 });
+  const h = harness({ remoteCheckpoint: { sourceNodeId: 'source-a', sourceSequence: 2, eventSequence: 20, fencingToken: 4 } });
   const kernel = new ObservabilityConvergenceKernel({ local: h.local, remote: h.remote, maxHistory: 1, idFactory: () => 'c4' });
   await kernel.reconcile({ sourceNodeId: 'source-a' });
   const history = kernel.history();

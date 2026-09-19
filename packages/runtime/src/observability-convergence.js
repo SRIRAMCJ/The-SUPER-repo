@@ -67,7 +67,7 @@ export class ObservabilityConvergenceKernel {
       const local = this.#local.snapshot();
       const comparison = compareSnapshots(local, remote, sourceNodeId);
       if (comparison.state === 'converged') {
-        if (comparison.digest && remote.digest && comparison.digest !== remote.digest) {
+        if (comparison.digest && comparison.remoteDigest && comparison.digest !== comparison.remoteDigest) {
           this.#state = CONVERGENCE_STATES.divergent;
           return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: { ...comparison, reason: 'DIGEST_DIVERGENCE' } });
         }
@@ -91,14 +91,27 @@ export class ObservabilityConvergenceKernel {
         signal,
         requestId,
       });
-      if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: CONVERGENCE_STATES.cancelled, repair });
+      const repairSummary = normalizeRepairResult(repair);
+      if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: CONVERGENCE_STATES.cancelled, repair: repairSummary });
       if (!repair || !['succeeded', 'converged'].includes(repair.state)) {
         this.#state = CONVERGENCE_STATES.failed;
-        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, repair, error: { code: 'OBSERVABILITY_REPAIR_FAILED', message: 'remote repair did not reach a terminal success state' } });
+        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, repair: repairSummary, error: { code: 'OBSERVABILITY_REPAIR_FAILED', message: 'remote repair did not reach a terminal success state' } });
       }
       const after = await this.#remote.inspect({ sourceNodeId, signal });
       const finalLocal = this.#local.snapshot();
       const finalComparison = compareSnapshots(finalLocal, after, sourceNodeId);
+      if (comparison.state === 'divergent' && comparison.remoteSourceSequence !== undefined && finalComparison.remoteSourceSequence === undefined && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
+        finalComparison.state = 'divergent';
+        finalComparison.reason = 'REPAIR_INCOMPLETE';
+        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
+        finalComparison.toSourceSequence = comparison.toSourceSequence;
+      }
+      if (finalComparison.state === 'converged' && comparison.state === 'divergent' && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
+        finalComparison.state = 'divergent';
+        finalComparison.reason = 'REPAIR_INCOMPLETE';
+        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
+        finalComparison.toSourceSequence = comparison.toSourceSequence;
+      }
       if (finalComparison.state === 'converged' && finalComparison.expectedDigest) {
         const verified = await this.#remote.verifyDigest?.({ sourceNodeId, expectedDigest: finalComparison.expectedDigest, signal }) ?? { valid: true };
         if (!verified.valid) {
@@ -107,7 +120,7 @@ export class ObservabilityConvergenceKernel {
         }
       }
       this.#state = finalComparison.state === 'converged' ? CONVERGENCE_STATES.converged : CONVERGENCE_STATES.divergent;
-      return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: finalComparison, repair });
+      return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: finalComparison, repair: repairSummary });
     } catch (error) {
       this.#state = signal?.aborted ? CONVERGENCE_STATES.cancelled : CONVERGENCE_STATES.failed;
       return this.#finish({ requestId, sourceNodeId, state: this.#state, error: normalizeError(error) });
@@ -130,7 +143,8 @@ function compareSnapshots(local, remote, sourceNodeId) {
   const localCheckpoint = local?.checkpoint?.checkpoints ?? local?.checkpoints ?? {};
   const remoteCheckpoint = remote?.checkpoint?.checkpoints ?? remote?.checkpoints ?? {};
   const localValue = localCheckpoint[sourceNodeId] ?? localCheckpoint[remote.sourceNodeId] ?? localCheckpoint[remote.nodeId] ?? null;
-  const remoteValue = remoteCheckpoint[sourceNodeId] ?? remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? remote.checkpoint ?? null;
+  const directRemoteCheckpoint = remote?.checkpoint && Number.isInteger(remote.checkpoint.sourceSequence) ? remote.checkpoint : null;
+  const remoteValue = remoteCheckpoint[sourceNodeId] ?? remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? directRemoteCheckpoint ?? null;
   if (!localValue || !remoteValue) {
     return { state: 'blocked', reason: 'CHECKPOINT_MISSING', fromSourceSequence: 1, toSourceSequence: 0 };
   }
@@ -138,7 +152,7 @@ function compareSnapshots(local, remote, sourceNodeId) {
     return { state: 'blocked', reason: 'FENCING_DIVERGENCE', localFencingToken: localValue.fencingToken, remoteFencingToken: remoteValue.fencingToken, fromSourceSequence: 1, toSourceSequence: 0 };
   }
   if (localValue.sourceSequence === remoteValue.sourceSequence && localValue.eventSequence === remoteValue.eventSequence) {
-    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken, digest: localValue.digest ?? null, expectedDigest: remoteValue.digest ?? null };
+    return { state: 'converged', sourceSequence: localValue.sourceSequence, eventSequence: localValue.eventSequence, fencingToken: localValue.fencingToken, digest: localValue.digest ?? null, remoteDigest: remoteValue.digest ?? null, expectedDigest: remoteValue.digest ?? null };
   }
   const from = Math.min(localValue.sourceSequence, remoteValue.sourceSequence) + 1;
   const to = Math.max(localValue.sourceSequence, remoteValue.sourceSequence);
@@ -158,3 +172,14 @@ function freeze(value) { return deepFreeze(structuredClone(value)); }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }
 
 export { SCHEMA_VERSION as OBSERVABILITY_CONVERGENCE_SCHEMA_VERSION, CONVERGENCE_STATES as OBSERVABILITY_CONVERGENCE_STATES };
+
+function normalizeRepairResult(repair) {
+  if (!repair || typeof repair !== 'object') return null;
+  const result = { state: repair.state ?? null };
+  for (const key of ['requestId','sourceNodeId','fromSourceSequence','toSourceSequence','repaired','attempt','rejected','checkpoint','error']) {
+    if (repair[key] !== undefined) {
+      try { result[key] = structuredClone(repair[key]); } catch { result[key] = String(repair[key]); }
+    }
+  }
+  return result;
+}

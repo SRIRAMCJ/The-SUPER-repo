@@ -47,9 +47,10 @@ export class ToolRuntime {
   listExecutions(limit = this.maxRecords) { if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer'); return [...this.#records.values()].slice(-limit).map((record) => structuredClone(record)); }
 
   #record(record) {
-    this.#records.set(record.executionId, Object.freeze(structuredClone(record)));
+    const normalized = record.completedAt === null && TERMINAL.has(record.status) ? { ...record, completedAt: this.clock().toISOString() } : record;
+    this.#records.set(normalized.executionId, Object.freeze(structuredClone(normalized)));
     while (this.#records.size > this.maxRecords) this.#records.delete(this.#records.keys().next().value);
-    return structuredClone(record);
+    return structuredClone(normalized);
   }
 }
 

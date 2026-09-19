@@ -6,6 +6,7 @@ export class ExecutionCancellationRegistry {
     if (this.#entries.has(executionId)) throw Object.assign(new Error(`Execution is already registered: ${executionId}`), { code: 'EXECUTION_ALREADY_REGISTERED', retryable: false });
     let rejectCancellation;
     const promise = new Promise((_, reject) => { rejectCancellation = reject; });
+    promise.catch(() => {});
     this.#entries.set(executionId, { controller, rejectCancellation });
     return promise;
   }

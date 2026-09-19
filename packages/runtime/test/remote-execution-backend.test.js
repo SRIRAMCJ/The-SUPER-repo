@@ -58,8 +58,6 @@ import { InMemoryRemoteExecutionTransport } from '../src/remote-execution-transp
 test('heartbeat failure reassigns an active execution and recovery resumes it on a live worker', async () => {
   let now = Date.parse('2026-09-20T00:00:00Z');
   const registry = new RemoteWorkerRegistry({ clock: () => new Date(now) });
-  registry.register({ workerId: 'worker-a', capabilities: ['runtime.execute'] });
-  registry.register({ workerId: 'worker-b', capabilities: ['runtime.execute'] });
   const leases = new RemoteWorkerLeaseManager({ clock: () => now, ttlMs: 60_000 });
   const scheduler = new RemoteWorkerScheduler({ registry, leases, clock: () => now });
   const failover = new RemoteWorkerFailoverController({ scheduler });
@@ -74,6 +72,7 @@ test('heartbeat failure reassigns an active execution and recovery resumes it on
   const pending = backend.execute({ executionId: 'exec-heartbeat-recovery', input: { command: 'node', args: [] }, capability: { id: 'runtime.execute' } });
   assert.equal(scheduler.current('exec-heartbeat-recovery').workerId, 'worker-a');
   now += 31_000;
+  transport.heartbeat('worker-b');
   const sweep = await monitor.sweep();
   assert.equal(sweep.lost.length, 1);
   assert.equal(sweep.lost[0].reassignment.state, 'scheduled');
@@ -87,4 +86,50 @@ test('heartbeat failure reassigns an active execution and recovery resumes it on
   assert.equal(executionLeases.length, 2);
   assert.equal(executionLeases[0].status, 'fenced');
   assert.equal(executionLeases[1].status, 'released');
+});
+
+test('remote backend schedules through the worker scheduler and dispatches the issued lease', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const scheduler = new RemoteWorkerScheduler({ registry, leases });
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  const seen = [];
+  transport.registerWorker({
+    workerId: 'worker-scheduler',
+    capabilities: ['runtime.execute'],
+    execute: async (_request, context) => {
+      seen.push(context);
+      return { status: 'succeeded', output: { workerId: context.workerId } };
+    },
+  });
+  const backend = new RemoteExecutionBackend({ transport, scheduler });
+  const result = await backend.execute({
+    executionId: 'exec-scheduler-dispatch',
+    input: { command: 'node', args: [] },
+    capability: { id: 'runtime.execute' },
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.workerId, 'worker-scheduler');
+  assert.ok(result.leaseId);
+  assert.ok(result.fencingToken);
+  assert.equal(seen[0].workerId, 'worker-scheduler');
+  assert.equal(seen[0].leaseId, result.leaseId);
+  assert.equal(seen[0].fencingToken, result.fencingToken);
+  assert.equal(leases.get(result.leaseId).status, 'released');
+});
+
+test('remote backend does not dispatch when scheduler has no capable worker', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const scheduler = new RemoteWorkerScheduler({ registry, leases });
+  let dispatched = false;
+  const backend = new RemoteExecutionBackend({ scheduler, transport: { execute: async () => { dispatched = true; } } });
+  const result = await backend.execute({
+    executionId: 'exec-no-capable-worker',
+    capability: { id: 'runtime.execute' },
+  });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'NO_CAPABLE_WORKER');
+  assert.equal(result.error.retryable, true);
+  assert.equal(dispatched, false);
 });

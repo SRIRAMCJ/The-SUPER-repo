@@ -89,7 +89,7 @@ export class MemoryCapability {
     this.records.clear();
     for (const record of snapshot.records) {
       const identity = normalizeIdentity(record.namespace, record.key);
-      if (record.id !== identity.id || !Number.isInteger(record.version) || record.version < 1) throw new TypeError(`Invalid memory record: ${identity.id}`);
+      if (typeof record.id !== 'string' || !record.id.trim() || record.namespace !== identity.namespace || record.key !== identity.key || !Number.isInteger(record.version) || record.version < 1) throw new TypeError(`Invalid memory record: ${identity.id}`);
       this.records.set(identity.id, Object.freeze(structuredClone(record)));
     }
     this.#purgeExpired();

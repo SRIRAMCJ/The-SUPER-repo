@@ -61,3 +61,4 @@ export { TeamBuilder } from './team-builder.js';
 export { ExecutionSandbox, SANDBOX_SCHEMA_VERSION, SANDBOX_TERMINAL_STATES } from './sandbox.js';
 export { ExecutionBackendRegistry, SandboxExecutionBackend, EXECUTION_BACKEND_SCHEMA_VERSION } from './execution-backend.js';
 export { RemoteExecutionBackend, REMOTE_EXECUTION_BACKEND_SCHEMA_VERSION } from './remote-execution-backend.js';
+export { InMemoryRemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION } from './remote-execution-transport.js';

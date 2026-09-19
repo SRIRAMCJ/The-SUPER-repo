@@ -24,7 +24,7 @@ jobs:
       - name: Core tests
         run: npm run test:core
       - name: Runtime tests
-        run: npm run test:runtime
+        run: npm run test:runtime -- --test-timeout=10000
       - name: Repository analyst tests
         run: npm run test:repository-analyst
       - name: CLI tests

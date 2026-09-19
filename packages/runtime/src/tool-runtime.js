@@ -16,7 +16,7 @@ export class ToolRuntime {
     const executionId = context.executionId ?? this.idFactory(toolId);
     if (this.#records.has(executionId)) return failure('EXECUTION_CONFLICT', `Execution already exists: ${executionId}`, executionId);
     let entry;
-    try { entry = this.registry.require(toolId); } catch (error) { return this.#record(failure('TOOL_UNAVAILABLE', errorMessage(error), executionId)); }
+    try { entry = this.registry.require(toolId); } catch (_error) { return this.#record(failure('TOOL_UNAVAILABLE', 'Tool capability is unavailable', executionId)); }
     if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId));
     const policy = this.policyEngine?.authorize({ id: toolId, name: entry.manifest.name, risk: entry.manifest.risk ?? 'none', permissions: entry.manifest.permissions ?? [] }, context);
     if (policy && policy.allowed !== true) return this.#record(failure('FORBIDDEN', policy.reason ?? 'Tool execution denied', executionId));
@@ -44,7 +44,7 @@ export class ToolRuntime {
   }
 
   getExecution(executionId) { const record = this.#records.get(executionId); return record ? structuredClone(record) : null; }
-  listExecutions(limit = this.maxRecords) { if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer'); return [...this.#records.values()].slice(-limit).map(structuredClone); }
+  listExecutions(limit = this.maxRecords) { if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer'); return [...this.#records.values()].slice(-limit).map((record) => structuredClone(record)); }
 
   #record(record) {
     this.#records.set(record.executionId, Object.freeze(structuredClone(record)));

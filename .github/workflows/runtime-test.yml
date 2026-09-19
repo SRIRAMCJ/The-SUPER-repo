@@ -4,7 +4,11 @@ on:
   push:
     branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
+
+concurrency:
+  group: runtime-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -12,6 +16,7 @@ permissions:
 jobs:
   runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -20,8 +25,37 @@ jobs:
       - name: Run core tests
         run: npm run test:core
       - name: Run runtime tests
-        run: npm run test:runtime
+        run: npm run test:runtime -- --test-concurrency=1 --test-timeout=10000 --test-force-exit
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests
         run: npm run test:cli
+
+  runtime-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Isolate runtime test files
+        shell: bash
+        run: |
+          set +e
+          for file in packages/runtime/test/*.test.js; do
+            echo "=== START $file ==="
+            timeout 10s node --test --test-concurrency=1 --test-force-exit "$file"
+            status=$?
+            if [ "$status" -eq 124 ]; then
+              echo "=== HANG $file status=$status ==="
+              exit 124
+            elif [ "$status" -ne 0 ]; then
+              echo "=== FAIL $file status=$status; continuing ==="
+            else
+              echo "=== PASS $file ==="
+            fi
+          done
+          exit 0

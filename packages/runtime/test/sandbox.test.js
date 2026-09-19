@@ -1,83 +1,84 @@
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import { ExecutionSandbox } from '../src/sandbox.js';
 
 const node = process.execPath;
 
-describe('ExecutionSandbox', () => {
-  it('executes a child process without shell interpolation', async () => {
+test('ExecutionSandbox', async (t) => {
+  await t.test('executes a child process without shell interpolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-1' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write("hello")']);
-    expect(result).toMatchObject({ executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 });
+    assert.deepEqual(Object.fromEntries(Object.keys({ executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 }).map((key) => [key, result[key]])), { executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 });
   });
 
-  it('uses a safe environment by default and accepts explicit values', async () => {
+  await t.test('uses a safe environment by default and accepts explicit values', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-2' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.SUPER_TEST ?? "missing")'], { env: { SUPER_TEST: 'ok' } });
-    expect(result.stdout).toBe('ok');
+    assert.equal(result.stdout, 'ok');
   });
 
-  it('does not inherit arbitrary host environment values by default', async () => {
+  await t.test('does not inherit arbitrary host environment values by default', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-3' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.SUPER_SECRET ?? "missing")'], { env: { SUPER_SECRET: 'visible' } });
-    expect(result.stdout).toBe('visible');
+    assert.equal(result.stdout, 'visible');
   });
 
-  it('does not inherit NODE_OPTIONS through the safe environment', async () => {
+  await t.test('does not inherit NODE_OPTIONS through the safe environment', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-3b' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.NODE_OPTIONS ?? "missing")']);
-    expect(result.stdout).toBe('missing');
+    assert.equal(result.stdout, 'missing');
   });
 
-  it('enforces output limits and terminates noisy processes', async () => {
+  await t.test('enforces output limits and terminates noisy processes', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-4' });
     const result = await sandbox.execute(node, ['-e', 'setInterval(() => process.stdout.write("xxxxxxxxxx"), 1)'], { maxOutputBytes: 100, timeoutMs: 5000 });
-    expect(result.status).toBe('failed');
-    expect(result.error.code).toBe('OUTPUT_LIMIT');
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error.code, 'OUTPUT_LIMIT');
   });
 
-  it('cancels a running process', async () => {
+  await t.test('cancels a running process', async () => {
     const controller = new AbortController();
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-5' });
     const pending = sandbox.execute(node, ['-e', 'setInterval(() => {}, 1000)'], { signal: controller.signal, timeoutMs: 5000 });
     setTimeout(() => controller.abort(new Error('stop')), 20);
     const result = await pending;
-    expect(result.status).toBe('cancelled');
-    expect(result.error.code).toBe('CANCELLED');
+    assert.equal(result.status, 'cancelled');
+    assert.equal(result.error.code, 'CANCELLED');
   });
 
-  it('times out a process', async () => {
+  await t.test('times out a process', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-6' });
     const result = await sandbox.execute(node, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 20 });
-    expect(result.status).toBe('timed_out');
-    expect(result.error.code).toBe('TIMED_OUT');
+    assert.equal(result.status, 'timed_out');
+    assert.equal(result.error.code, 'TIMED_OUT');
   });
 
-  it('reports a process that independently terminates with SIGTERM as failed', async () => {
+  await t.test('reports a process that independently terminates with SIGTERM as failed', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-6b' });
     const result = await sandbox.execute(node, ['-e', 'process.kill(process.pid, "SIGTERM")']);
-    expect(result.status).toBe('failed');
-    expect(result.error.code).toBe('PROCESS_EXIT');
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error.code, 'PROCESS_EXIT');
   });
 
-  it('fails closed for unsupported network isolation', async () => {
+  await t.test('fails closed for unsupported network isolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-7' });
     const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { policy: { network: true } });
-    expect(result.error.code).toBe('NETWORK_ISOLATION_UNAVAILABLE');
+    assert.equal(result.error.code, 'NETWORK_ISOLATION_UNAVAILABLE');
   });
 
-  it('fails closed for unsupported filesystem isolation', async () => {
+  await t.test('fails closed for unsupported filesystem isolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-8' });
     const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { policy: { filesystem: 'workspace' } });
-    expect(result.error.code).toBe('FILESYSTEM_ISOLATION_UNAVAILABLE');
+    assert.equal(result.error.code, 'FILESYSTEM_ISOLATION_UNAVAILABLE');
   });
 
-  it('bounds retained records and prevents id reuse', async () => {
+  await t.test('bounds retained records and prevents id reuse', async () => {
     let n = 0;
     const sandbox = new ExecutionSandbox({ maxRecords: 1, idFactory: () => `sandbox-${++n}` });
     await sandbox.execute(node, ['-e', 'process.exit(0)']);
     const second = await sandbox.execute(node, ['-e', 'process.exit(0)']);
-    expect(second.executionId).toBe('sandbox-2');
-    expect(sandbox.listExecutions()).toHaveLength(1);
-    await expect(sandbox.execute(node, ['-e', 'process.exit(0)'], { executionId: 'sandbox-2' })).resolves.toMatchObject({ error: { code: 'EXECUTION_CONFLICT' } });
+    assert.equal(second.executionId, 'sandbox-2');
+    assert.equal(sandbox.listExecutions().length, 1);
+    assert.deepEqual(Object.fromEntries(Object.keys({ error: { code: 'EXECUTION_CONFLICT' } }).map((key) => [key, sandbox.execute(node, ['-e', 'process.exit(0)'], { executionId: 'sandbox-2' })[key]])), { error: { code: 'EXECUTION_CONFLICT' } });
   });
 });

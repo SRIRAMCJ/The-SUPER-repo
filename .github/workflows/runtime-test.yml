@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
 
 concurrency:
   group: runtime-tests-${{ github.event.pull_request.number || github.ref }}

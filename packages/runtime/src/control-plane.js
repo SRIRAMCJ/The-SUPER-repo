@@ -19,7 +19,7 @@ export class RuntimeControlPlane {
   getHealth() {
     const now = this.clock().getTime();
     const metrics = this.observability.getMetrics();
-    const recentFailures = this.observability.getEvents().filter((event) => /\\.(failed|denied|cancelled|rolled_back|rejected)$/.test(event.type) && now - Date.parse(event.timestamp) <= this.failureWindowMs).length;
+    const recentFailures = this.observability.getEvents().filter((event) => /\.(failed|denied|cancelled|rolled_back|rejected)$/.test(event.type) && now - Date.parse(event.timestamp) <= this.failureWindowMs).length;
     const started = metric(metrics, 'executions.started');
     const failed = metric(metrics, 'executions.failed');
     const denied = metric(metrics, 'executions.denied');
@@ -38,7 +38,7 @@ export class RuntimeControlPlane {
       item.lastEventType = event.type;
       item.lastEventAt = event.timestamp;
       if (event.type.endsWith('.started') && !item.startedAt) { item.startedAt = event.timestamp; item.status = 'running'; }
-      if (/\\.(completed|failed|cancelled|rolled_back|rejected)$/.test(event.type)) { item.endedAt = event.timestamp; item.status = event.type.split('.').at(-1); }
+      if (/\.(completed|failed|cancelled|rolled_back|rejected)$/.test(event.type)) { item.endedAt = event.timestamp; item.status = event.type.split('.').at(-1); }
       executions.set(event.executionId, item);
     }
     return Object.freeze([...executions.values()].filter((item) => !status || item.status === status).sort((a, b) => String(b.lastEventAt).localeCompare(String(a.lastEventAt))).slice(0, limit).map(freeze));

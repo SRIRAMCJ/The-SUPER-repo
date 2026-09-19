@@ -8,7 +8,10 @@ test('ExecutionSandbox', async (t) => {
   await t.test('executes a child process without shell interpolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-1' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write("hello")']);
-    assert.deepEqual(Object.fromEntries(Object.keys({ executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 }).map((key) => [key, result[key]])), { executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 });
+    assert.deepEqual(
+      { executionId: result.executionId, status: result.status, stdout: result.stdout, exitCode: result.exitCode },
+      { executionId: 'sandbox-1', status: 'succeeded', stdout: 'hello', exitCode: 0 },
+    );
   });
 
   await t.test('uses a safe environment by default and accepts explicit values', async () => {
@@ -53,7 +56,7 @@ test('ExecutionSandbox', async (t) => {
     assert.equal(result.error.code, 'TIMED_OUT');
   });
 
-  await t.test('reports a process that independently terminates with SIGTERM as failed', async () => {
+  await t.test('reports an independently terminated SIGTERM as a process failure', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-6b' });
     const result = await sandbox.execute(node, ['-e', 'process.kill(process.pid, "SIGTERM")']);
     assert.equal(result.status, 'failed');
@@ -66,10 +69,23 @@ test('ExecutionSandbox', async (t) => {
     assert.equal(result.error.code, 'NETWORK_ISOLATION_UNAVAILABLE');
   });
 
-  await t.test('fails closed for unsupported filesystem isolation', async () => {
+  await t.test('fails closed for unsupported workspace filesystem isolation', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-8' });
-    const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { policy: { filesystem: 'workspace' } });
+    const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { cwd: process.cwd(), policy: { filesystem: 'workspace' } });
     assert.equal(result.error.code, 'FILESYSTEM_ISOLATION_UNAVAILABLE');
+  });
+
+  await t.test('fails closed for unsupported read-only filesystem isolation', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-8b' });
+    const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { cwd: process.cwd(), policy: { filesystem: 'read-only' } });
+    assert.equal(result.error.code, 'FILESYSTEM_ISOLATION_UNAVAILABLE');
+  });
+
+  await t.test('preserves UTF-8 output', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-8c' });
+    const result = await sandbox.execute(node, ['-e', 'process.stdout.write("தமிழ் 🚀")']);
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.stdout, 'தமிழ் 🚀');
   });
 
   await t.test('bounds retained records and prevents id reuse', async () => {
@@ -79,6 +95,7 @@ test('ExecutionSandbox', async (t) => {
     const second = await sandbox.execute(node, ['-e', 'process.exit(0)']);
     assert.equal(second.executionId, 'sandbox-2');
     assert.equal(sandbox.listExecutions().length, 1);
-    assert.deepEqual(Object.fromEntries(Object.keys({ error: { code: 'EXECUTION_CONFLICT' } }).map((key) => [key, sandbox.execute(node, ['-e', 'process.exit(0)'], { executionId: 'sandbox-2' })[key]])), { error: { code: 'EXECUTION_CONFLICT' } });
+    const conflict = await sandbox.execute(node, ['-e', 'process.exit(0)'], { executionId: 'sandbox-2' });
+    assert.equal(conflict.error.code, 'EXECUTION_CONFLICT');
   });
 });

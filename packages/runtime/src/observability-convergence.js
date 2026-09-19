@@ -91,10 +91,11 @@ export class ObservabilityConvergenceKernel {
         signal,
         requestId,
       });
-      if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: CONVERGENCE_STATES.cancelled, repair });
+      const repairSummary = normalizeRepairResult(repair);
+      if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: CONVERGENCE_STATES.cancelled, repair: repairSummary });
       if (!repair || !['succeeded', 'converged'].includes(repair.state)) {
         this.#state = CONVERGENCE_STATES.failed;
-        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, repair, error: { code: 'OBSERVABILITY_REPAIR_FAILED', message: 'remote repair did not reach a terminal success state' } });
+        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, repair: repairSummary, error: { code: 'OBSERVABILITY_REPAIR_FAILED', message: 'remote repair did not reach a terminal success state' } });
       }
       const after = await this.#remote.inspect({ sourceNodeId, signal });
       const finalLocal = this.#local.snapshot();
@@ -115,7 +116,7 @@ export class ObservabilityConvergenceKernel {
         }
       }
       this.#state = finalComparison.state === 'converged' ? CONVERGENCE_STATES.converged : CONVERGENCE_STATES.divergent;
-      return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: finalComparison, repair });
+      return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison: finalComparison, repair: repairSummary });
     } catch (error) {
       this.#state = signal?.aborted ? CONVERGENCE_STATES.cancelled : CONVERGENCE_STATES.failed;
       return this.#finish({ requestId, sourceNodeId, state: this.#state, error: normalizeError(error) });
@@ -167,3 +168,14 @@ function freeze(value) { return deepFreeze(structuredClone(value)); }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }
 
 export { SCHEMA_VERSION as OBSERVABILITY_CONVERGENCE_SCHEMA_VERSION, CONVERGENCE_STATES as OBSERVABILITY_CONVERGENCE_STATES };
+
+function normalizeRepairResult(repair) {
+  if (!repair || typeof repair !== 'object') return null;
+  const result = { state: repair.state ?? null };
+  for (const key of ['requestId','sourceNodeId','fromSourceSequence','toSourceSequence','repaired','attempt','rejected','checkpoint','error']) {
+    if (repair[key] !== undefined) {
+      try { result[key] = structuredClone(repair[key]); } catch { result[key] = String(repair[key]); }
+    }
+  }
+  return result;
+}

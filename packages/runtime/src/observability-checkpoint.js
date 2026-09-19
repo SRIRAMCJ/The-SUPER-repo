@@ -36,7 +36,6 @@ export class ObservabilityCheckpointAuthority {
     if (current) {
       if (fencingToken < current.fencingToken) return this.#result('stale_fence', { sourceNodeId, fencingToken, currentFencingToken: current.fencingToken });
       if (sourceSequence < current.sourceSequence) return this.#result('stale', { sourceNodeId, sourceSequence, currentSourceSequence: current.sourceSequence });
-      if (sourceSequence === current.sourceSequence && eventSequence < current.eventSequence) return this.#result('stale', { sourceNodeId, sourceSequence, eventSequence, currentEventSequence: current.eventSequence });
       if (sourceSequence === current.sourceSequence && eventSequence === current.eventSequence && fencingToken === current.fencingToken) return this.#result('duplicate', { checkpoint: current });
       if (sourceSequence === current.sourceSequence && eventSequence <= current.eventSequence) return this.#result('conflict', { sourceNodeId, sourceSequence, eventSequence, currentEventSequence: current.eventSequence });
     }

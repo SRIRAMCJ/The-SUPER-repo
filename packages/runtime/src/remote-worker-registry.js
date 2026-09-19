@@ -50,8 +50,8 @@ export class RemoteWorkerRegistry {
     return [...this.#workers.values()].filter(worker => worker.state === 'healthy' && worker.capabilities.includes(capabilityId)).sort((a,b) => a.workerId.localeCompare(b.workerId))[0] ?? null;
   }
 
-  get(workerId) { const worker = this.#workers.get(workerId); return worker ? clone(worker) : null; }
-  list() { return Object.freeze([...this.#workers.values()].map(clone)); }
+  get(workerId) { const worker = this.#workers.get(workerId); return worker ? freeze(worker) : null; }
+  list() { return Object.freeze([...this.#workers.values()].map(freeze)); }
 }
 
 function validateWorkerId(value) { if (typeof value !== 'string' || !value.trim()) throw new TypeError('workerId must be a non-empty string'); }

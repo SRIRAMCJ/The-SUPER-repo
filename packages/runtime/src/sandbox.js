@@ -32,19 +32,19 @@ export class ExecutionSandbox {
 
   async execute(command, args = [], options = {}) {
     const executionId = options.executionId ?? this.idFactory();
-    if (this.#records.has(executionId)) return this.#record(failure(executionId, 'EXECUTION_CONFLICT', 'Sandbox execution id already exists'));
+    if (this.#records.has(executionId)) return this.#record(failure(executionId, 'EXECUTION_CONFLICT', 'Sandbox execution id already exists', this.clock));
 
     try {
       validateCommand(command, args);
       const policy = normalizePolicy(options.policy);
-      validatePolicy(policy, options);
+      validatePolicy(policy);
       const timeoutMs = normalizePositive(options.timeoutMs ?? this.defaultTimeoutMs, 'timeoutMs');
       const maxOutputBytes = normalizePositiveInteger(options.maxOutputBytes ?? this.defaultMaxOutputBytes, 'maxOutputBytes');
       const cwd = validateCwd(options.cwd);
       const env = buildEnvironment(options.env, policy);
       return await this.#spawn({ executionId, command, args, cwd, env, policy, timeoutMs, maxOutputBytes, signal: options.signal });
     } catch (error) {
-      return this.#record(failure(executionId, error.code ?? 'SANDBOX_INVALID', error instanceof Error ? error.message : String(error)));
+      return this.#record(failure(executionId, error.code ?? 'SANDBOX_INVALID', error instanceof Error ? error.message : String(error), this.clock));
     }
   }
 
@@ -78,13 +78,12 @@ export class ExecutionSandbox {
     let timer = null;
     let detach = null;
 
-    const terminate = (reason, code) => {
+    const terminate = (_reason, code) => {
       if (settled) return;
       settled = true;
       terminationReason = code;
       try { child.kill('SIGTERM'); } catch {}
       setTimeout(() => { try { if (!closed) child.kill('SIGKILL'); } catch {} }, 100).unref?.();
-      return reason;
     };
 
     if (signal) {
@@ -123,7 +122,7 @@ export class ExecutionSandbox {
         if (timer) clearTimeout(timer);
         detach?.();
         if (!settled) settled = true;
-        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, startedAt, {
+        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, this.clock, {
           stdout: decode(stdoutChunks),
           stderr: decode(stderrChunks),
         })));
@@ -134,7 +133,7 @@ export class ExecutionSandbox {
         detach?.();
         const completedAt = this.clock().toISOString();
         const status = settled
-          ? (outputLimit ? 'failed' : inferTerminal(terminationReason, signalName, exitCode))
+          ? (outputLimit ? 'failed' : inferTerminal(terminationReason))
           : exitCode === 0 ? 'succeeded' : 'failed';
         const error = status === 'succeeded' ? null : {
           code: outputLimit ? 'OUTPUT_LIMIT' : status === 'cancelled' ? 'CANCELLED' : status === 'timed_out' ? 'TIMED_OUT' : 'PROCESS_EXIT',
@@ -175,11 +174,10 @@ function normalizePolicy(policy = {}) {
   };
 }
 
-function validatePolicy(policy, options) {
+function validatePolicy(policy) {
   if (!['none', 'workspace', 'read-only'].includes(policy.filesystem)) throw codeError('INVALID_FILESYSTEM_POLICY', 'filesystem must be none, workspace, or read-only');
   if (!['safe', 'inherit'].includes(policy.environment)) throw codeError('INVALID_ENVIRONMENT_POLICY', 'environment must be safe or inherit');
-  if (policy.filesystem !== 'none' && !options.cwd) throw codeError('WORKSPACE_REQUIRED', 'cwd is required for filesystem-enabled sandbox execution');
-  if (options.cwd && policy.filesystem === 'none') throw codeError('FILESYSTEM_DENIED', 'cwd is not permitted when filesystem access is disabled');
+  if (policy.filesystem !== 'none') throw codeError('FILESYSTEM_ISOLATION_UNAVAILABLE', 'The process backend cannot enforce OS-level filesystem isolation');
   if (policy.network) throw codeError('NETWORK_ISOLATION_UNAVAILABLE', 'The process backend cannot enforce OS-level network isolation');
 }
 
@@ -225,13 +223,13 @@ function codeError(code, message) {
   return error;
 }
 
-function failure(executionId, code, message, startedAt = null, output = {}) {
+function failure(executionId, code, message, clock, output = {}) {
   return {
     schemaVersion: SANDBOX_SCHEMA_VERSION,
     executionId,
     status: 'failed',
-    startedAt,
-    completedAt: new Date().toISOString(),
+    startedAt: null,
+    completedAt: clock().toISOString(),
     error: { code, message },
     ...output,
   };

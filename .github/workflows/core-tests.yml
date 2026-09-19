@@ -1,0 +1,32 @@
+name: Core Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feat/**"
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Core tests
+        run: npm run test:core
+      - name: Runtime tests
+        run: npm run test:runtime
+      - name: Repository analyst tests
+        run: npm run test:repository-analyst
+      - name: CLI tests
+        run: npm run test:cli

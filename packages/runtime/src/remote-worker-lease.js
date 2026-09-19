@@ -8,11 +8,11 @@ export class RemoteWorkerLeaseManager {
     if (typeof clock !== 'function' || !Number.isFinite(ttlMs) || ttlMs <= 0) throw new TypeError('valid clock and positive ttlMs are required');
     this.#clock=clock; this.#ttlMs=ttlMs;
   }
-  acquire({ executionId, workerId } = {}) {
+  acquire({ executionId, workerId, capabilityId = null } = {}) {
     if (!executionId?.trim() || !workerId?.trim()) throw new TypeError('executionId and workerId are required');
     const now=this.#clock(); const existing=this.#findExecution(executionId);
     if (existing && !TERMINAL.has(existing.status)) return this.#result('conflict',{code:'LEASE_ALREADY_HELD',lease:existing});
-    const lease=Object.freeze({schemaVersion:SCHEMA_VERSION,leaseId:`lease-${++this.#sequence}`,executionId,workerId,status:'active',fencingToken:`fence-${++this.#fenceSequence}`,acquiredAt:now,expiresAt:now+this.#ttlMs});
+    const lease=Object.freeze({schemaVersion:SCHEMA_VERSION,leaseId:`lease-${++this.#sequence}`,executionId,workerId,capabilityId,status:'active',fencingToken:`fence-${++this.#fenceSequence}`,acquiredAt:now,expiresAt:now+this.#ttlMs});
     this.#leases.set(lease.leaseId,lease); return this.#result('acquired',{lease});
   }
   renew(leaseId, expectedFencingToken = null) {

@@ -76,3 +76,6 @@ test('transport rejects stale fenced ownership before dispatch', async () => {
   await assert.rejects(()=>transport.execute({executionId:'exec-stale',capability:{id:'runtime.execute'}},{workerId:'worker-a',leaseId:second.lease.leaseId,fencingToken:first.lease.fencingToken}),e=>e.code==='STALE_FENCING_TOKEN');
   assert.equal(calls,0); assert.ok(second.lease.fencingToken!==first.lease.fencingToken);
 });
+
+
+test('transport fences active execution ownership when a worker is unregistered',async()=>{const registry=new RemoteWorkerRegistry();const leases=new RemoteWorkerLeaseManager();const transport=new InMemoryRemoteExecutionTransport({workerRegistry:registry,leaseManager:leases});let release;const gate=new Promise(resolve=>{release=resolve;});transport.registerWorker({workerId:'worker-dead',capabilities:['runtime.execute'],execute:async()=>{await gate;return {status:'succeeded'};}});const pending=transport.execute({executionId:'exec-unregister',capability:{id:'runtime.execute'}});await new Promise(resolve=>setImmediate(resolve));const remote=transport.inspect('rex-1');assert.equal(remote.workerId,'worker-dead');transport.unregisterWorker('worker-dead');release();await assert.rejects(()=>pending,e=>e.code==='STALE_FENCING_TOKEN');assert.equal(leases.get(remote.leaseId).status,'fenced');});

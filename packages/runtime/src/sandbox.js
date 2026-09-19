@@ -37,7 +37,7 @@ export class ExecutionSandbox {
     try {
       validateCommand(command, args);
       const policy = normalizePolicy(options.policy);
-      validatePolicy(policy);
+      validatePolicy(policy, options);
       const timeoutMs = normalizePositive(options.timeoutMs ?? this.defaultTimeoutMs, 'timeoutMs');
       const maxOutputBytes = normalizePositiveInteger(options.maxOutputBytes ?? this.defaultMaxOutputBytes, 'maxOutputBytes');
       const cwd = validateCwd(options.cwd);
@@ -174,10 +174,11 @@ function normalizePolicy(policy = {}) {
   };
 }
 
-function validatePolicy(policy) {
+function validatePolicy(policy, options) {
   if (!['none', 'workspace', 'read-only'].includes(policy.filesystem)) throw codeError('INVALID_FILESYSTEM_POLICY', 'filesystem must be none, workspace, or read-only');
   if (!['safe', 'inherit'].includes(policy.environment)) throw codeError('INVALID_ENVIRONMENT_POLICY', 'environment must be safe or inherit');
   if (policy.filesystem !== 'none') throw codeError('FILESYSTEM_ISOLATION_UNAVAILABLE', 'The process backend cannot enforce OS-level filesystem isolation');
+  if (options.cwd !== undefined && options.cwd !== null && policy.filesystem === 'none') throw codeError('FILESYSTEM_DENIED', 'cwd is not permitted when filesystem access is disabled');
   if (policy.network) throw codeError('NETWORK_ISOLATION_UNAVAILABLE', 'The process backend cannot enforce OS-level network isolation');
 }
 

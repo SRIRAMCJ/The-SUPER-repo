@@ -105,12 +105,12 @@ export class ObservabilityConvergenceKernel {
         finalComparison.reason = 'REPAIR_INCOMPLETE';
         finalComparison.fromSourceSequence = comparison.fromSourceSequence;
         finalComparison.toSourceSequence = comparison.toSourceSequence;
-        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
-        finalComparison.toSourceSequence = comparison.toSourceSequence;
       }
       if (finalComparison.state === 'converged' && comparison.state === 'divergent' && finalComparison.sourceSequence !== comparison.remoteSourceSequence) {
         finalComparison.state = 'divergent';
         finalComparison.reason = 'REPAIR_INCOMPLETE';
+        finalComparison.fromSourceSequence = comparison.fromSourceSequence;
+        finalComparison.toSourceSequence = comparison.toSourceSequence;
       }
       if (finalComparison.state === 'converged' && finalComparison.expectedDigest) {
         const verified = await this.#remote.verifyDigest?.({ sourceNodeId, expectedDigest: finalComparison.expectedDigest, signal }) ?? { valid: true };

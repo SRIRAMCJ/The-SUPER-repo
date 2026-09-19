@@ -82,7 +82,7 @@ export class ExecutionSandbox {
       settled = true;
       terminationReason = code;
       try { child.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { if (!child.killed) child.kill('SIGKILL'); } catch {} }, 100).unref?.();
+      setTimeout(() => { try { if (!closed) child.kill('SIGKILL'); } catch {} }, 100).unref?.();
       return code;
     };
 
@@ -121,7 +121,7 @@ export class ExecutionSandbox {
         if (timer) clearTimeout(timer);
         detach?.();
         if (!settled) settled = true;
-        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, startedAt, { stdout, stderr })));
+        resolve(this.#record(failure(executionId, 'SPAWN_FAILED', error.message, startedAt, { stdout: decode(stdoutChunks), stderr: decode(stderrChunks) })));
       });
       child.once('close', (exitCode, signalName) => {
         if (timer) clearTimeout(timer);
@@ -199,7 +199,7 @@ function buildEnvironment(overrides, policy) {
   return base;
 }
 
-function normalizePositive(value, name) {
+function decode(chunks) {\n  return Buffer.concat(chunks).toString('utf8');\n}\n\nfunction normalizePositive(value, name) {
   if (!Number.isFinite(value) || value < 1) throw new TypeError(`${name} must be a positive finite number`);
   return value;
 }

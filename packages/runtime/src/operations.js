@@ -77,7 +77,7 @@ function checkComponent(checks, id, component, methods, optional = false) {
   checks.push({
     id: `component.${id}`,
     severity: optional ? 'info' : 'error',
-    status: available ? 'pass' : optional ? 'not_configured' : 'fail',
+    status: available ? 'pass' : optional ? 'warning' : 'fail',
     message: available ? `${id} is available` : `${id} is ${optional ? 'not configured' : 'unavailable'}`,
     details: { configured: Boolean(component), requiredMethods: methods }
   });

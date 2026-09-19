@@ -7,7 +7,7 @@ export class InMemoryRemoteExecutionTransport {
   constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null } = {}) {
     if (!Number.isFinite(leaseTtlMs) || leaseTtlMs <= 0) throw new TypeError('leaseTtlMs must be positive');
     if (workerRegistry && typeof workerRegistry.resolveCapability !== 'function') throw new TypeError('workerRegistry must expose resolveCapability()');
-    if (leaseManager && typeof leaseManager.acquire !== 'function' || leaseManager && typeof leaseManager.validate !== 'function') throw new TypeError('leaseManager must expose acquire() and validate()');
+    if (leaseManager && (typeof leaseManager.acquire !== 'function' || typeof leaseManager.validate !== 'function')) throw new TypeError('leaseManager must expose acquire() and validate()');
     this.#clock = clock; this.#leaseTtlMs = leaseTtlMs; this.#registry = workerRegistry; this.#leaseManager = leaseManager;
   }
 
@@ -92,11 +92,15 @@ export class InMemoryRemoteExecutionTransport {
       if (!worker || this.#clock()-worker.lastHeartbeatAt>this.#leaseTtlMs) return null;
       const registered=this.#registry?.get?.(requestedWorkerId);
       if (registered?.state==='unhealthy') return null;
+      const capabilityId=request.capability?.id ?? request.capability?.name;
+      if (capabilityId && registered && !registered.capabilities.includes(capabilityId)) return null;
       return worker;
     }
     const capabilityId=request.capability?.id ?? request.capability?.name;
-    const selected=this.#registry?.resolveCapability(capabilityId);
-    if (selected) return this.#workers.get(selected.workerId) ?? null;
+    if (this.#registry && capabilityId) {
+      const selected=this.#registry.resolveCapability(capabilityId);
+      return selected ? this.#workers.get(selected.workerId) ?? null : null;
+    }
     const now=this.#clock();
     return [...this.#workers.values()].find(w=>now-w.lastHeartbeatAt<=this.#leaseTtlMs) ?? null;
   }

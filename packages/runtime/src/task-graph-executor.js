@@ -121,6 +121,7 @@ function finish(plan, executionId, startedAt, config, results, resumed, attempt,
   const rootResult = ordered.at(-1);
   const output = { schemaVersion: '0.1.0', type: 'task-graph-execution', executionId, goal: plan.goal, startedAt, finishedAt: clock().toISOString(), status: forcedStatus ?? (failed || skipped ? 'failed' : 'succeeded'), strategy: config.strategy, maxConcurrency: config.maxConcurrency, failFast: config.failFast, rootTaskId: plan.order.at(-1), output: rootResult?.output ?? null, results: ordered, resumed, attempt };
   if (forcedStatus === 'cancelled') output.error = { code: 'EXECUTION_CANCELLED', message: 'Task graph execution cancelled', retryable: false };
+  else if (failed && rootResult?.error) output.error = structuredClone(rootResult.error);
   return output;
 }
 

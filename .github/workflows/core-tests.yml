@@ -29,3 +29,16 @@ jobs:
         run: npm run test:repository-analyst
       - name: CLI tests
         run: npm run test:cli
+
+  sandbox-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Sandbox tests
+        run: node --test --test-timeout=5000 packages/runtime/test/sandbox.test.js

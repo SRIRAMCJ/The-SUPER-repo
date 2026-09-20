@@ -14,13 +14,13 @@ export class ToolRuntime {
 
   async execute(toolId, input = {}, context = {}) {
     const executionId = context.executionId ?? this.idFactory(toolId);
-    if (this.#records.has(executionId)) return failure('EXECUTION_CONFLICT', `Execution already exists: ${executionId}`, executionId);
+    if (this.#records.has(executionId)) return failure('EXECUTION_CONFLICT', `Execution already exists: ${executionId}`, executionId, null, this.clock().toISOString());
     let entry;
-    try { entry = this.registry.require(toolId); } catch (_error) { return this.#record(failure('TOOL_UNAVAILABLE', 'Tool capability is unavailable', executionId)); }
-    if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId));
+    try { entry = this.registry.require(toolId); } catch (_error) { return this.#record(failure('TOOL_UNAVAILABLE', 'Tool capability is unavailable', executionId, null, this.clock().toISOString())); }
+    if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId, null, this.clock().toISOString()));
     const policy = this.policyEngine?.authorize({ id: toolId, name: entry.manifest.name, risk: entry.manifest.risk ?? 'none', permissions: entry.manifest.permissions ?? [] }, context);
-    if (policy && policy.allowed !== true) return this.#record(failure('FORBIDDEN', policy.reason ?? 'Tool execution denied', executionId));
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));
+    if (policy && policy.allowed !== true) return this.#record(failure('FORBIDDEN', policy.reason ?? 'Tool execution denied', executionId, null, this.clock().toISOString()));
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId, null, this.clock().toISOString()));
 
     const controller = new AbortController();
     const parentSignal = context.signal;
@@ -54,7 +54,7 @@ export class ToolRuntime {
 }
 
 function success(executionId, startedAt, completedAt, output) { return { schemaVersion: SCHEMA_VERSION, executionId, status: 'succeeded', startedAt, completedAt, output: structuredClone(output) }; }
-function failure(code, message, executionId, startedAt = null) { return { schemaVersion: SCHEMA_VERSION, executionId, status: code === 'CANCELLED' ? 'cancelled' : code === 'TIMED_OUT' ? 'timed_out' : 'failed', error: { code, message }, startedAt, completedAt: new Date().toISOString() }; }
+function failure(code, message, executionId, startedAt = null, completedAt = new Date().toISOString()) { return { schemaVersion: SCHEMA_VERSION, executionId, status: code === 'CANCELLED' ? 'cancelled' : code === 'TIMED_OUT' ? 'timed_out' : 'failed', error: { code, message }, startedAt, completedAt }; }
 function normalizeTimeout(value) { if (value === undefined || value === null) return null; if (!Number.isFinite(value) || value < 1) throw new TypeError('timeoutMs must be a positive finite number'); return value; }
 function isTimeout(reason) { return reason instanceof Error && /timed out/i.test(reason.message); }
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }

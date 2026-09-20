@@ -78,9 +78,9 @@ test('lifecycle state and history are isolated from caller mutation', async () =
   const manager = new RuntimeLifecycleManager({ clock });
   await manager.start();
   const state = manager.getState();
-  state.activeOperation = { component: 'evil' };
+  assert.throws(() => { state.activeOperation = { component: 'evil' }; }, TypeError);
   const history = manager.getHistory();
-  history.push({ state: 'evil' });
+  assert.throws(() => { history.push({ state: 'evil' }); }, TypeError);
   assert.equal(manager.getState().activeOperation, null);
   assert.equal(manager.getHistory().some((entry) => entry.state === 'evil'), false);
   await manager.stop();

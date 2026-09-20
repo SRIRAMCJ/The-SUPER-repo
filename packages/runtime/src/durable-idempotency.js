@@ -2,12 +2,15 @@ import { appendFile, mkdir, readFile, rename, writeFile, open, stat, rm } from '
 import { dirname } from 'node:path';
 
 const SCHEMA_VERSION = '0.2.0';
+const DEFAULT_LOCK_RETRY_MS = 10;
+const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
+const DEFAULT_LOCK_STALE_MS = 30_000;
 
 export class DurableIdempotencyStore {
   #records = new Map();
   #lockPath;
 
-  constructor({ filePath, clock = () => Date.now(), ttlMs = 300_000, maxRecords = 10_000 } = {}) {
+  constructor({ filePath, clock = () => Date.now(), ttlMs = 300_000, maxRecords = 10_000, lockRetryMs = DEFAULT_LOCK_RETRY_MS, lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS, lockStaleMs = DEFAULT_LOCK_STALE_MS } = {}) {
     if (typeof filePath !== 'string' || !filePath.trim()) throw new TypeError('filePath must be a non-empty string');
     if (typeof clock !== 'function') throw new TypeError('clock must be a function');
     if (!Number.isInteger(ttlMs) || ttlMs < 1) throw new TypeError('ttlMs must be a positive integer');

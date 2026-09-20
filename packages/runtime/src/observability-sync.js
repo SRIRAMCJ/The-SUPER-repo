@@ -61,9 +61,9 @@ export class ObservabilitySyncCoordinator {
       const imported = results.filter((result) => result.state === 'published' || result.state === 'duplicate').length;
       const rejected = results.length - imported;
       let checkpointResult = null;
+      let integrity = null;
       if (!gap && sourceEvents.length && this.#checkpoint) {
         const last = sourceEvents[sourceEvents.length - 1];
-        let integrity = null;
         if (typeof this.#store.digestSourceRange === 'function') {
           integrity = await this.#store.digestSourceRange({ sourceNodeId, fromSourceSequence: afterSourceSequence + 1, toSourceSequence: last.sourceSequence });
           if (!integrity.valid) return this.#finish({ requestId, sourceNodeId, state: SYNC_STATES.failed, imported, rejected, gap: null, error: { code: integrity.code, message: 'checkpoint integrity range could not be derived from durable events' } });

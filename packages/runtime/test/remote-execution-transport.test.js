@@ -54,3 +54,82 @@ test('transport rejects duplicate worker registration', () => {
   transport.registerWorker({ workerId: 'worker-a', execute });
   assert.throws(() => transport.registerWorker({ workerId: 'worker-a', execute }), error => error.code === 'WORKER_ALREADY_REGISTERED');
 });
+
+
+import { RemoteWorkerRegistry } from '../src/remote-worker-registry.js';
+import { RemoteWorkerLeaseManager } from '../src/remote-worker-lease.js';
+
+test('transport uses scheduler-issued lease and fencing token to dispatch to the selected worker', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  transport.registerWorker({
+    workerId: 'worker-a',
+    capabilities: ['runtime.execute'],
+    execute: async (_request, context) => ({ status: 'succeeded', output: { workerId: context.workerId, fence: context.fencingToken } }),
+  });
+
+  const acquired = leases.acquire({ executionId: 'exec-fenced', workerId: 'worker-a' });
+  const result = await transport.execute(
+    { executionId: 'exec-fenced', capability: { id: 'runtime.execute' } },
+    { workerId: 'worker-a', leaseId: acquired.lease.leaseId, fencingToken: acquired.lease.fencingToken },
+  );
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.workerId, 'worker-a');
+  assert.equal(result.fencingToken, acquired.lease.fencingToken);
+  assert.equal(leases.get(result.leaseId).status, 'released');
+});
+
+test('transport rejects stale fenced ownership before dispatch', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  let calls = 0;
+  transport.registerWorker({
+    workerId: 'worker-a',
+    capabilities: ['runtime.execute'],
+    execute: async () => {
+      calls += 1;
+      return { status: 'succeeded' };
+    },
+  });
+
+  const first = leases.acquire({ executionId: 'exec-stale', workerId: 'worker-a' });
+  leases.fence(first.lease.leaseId);
+  const second = leases.acquire({ executionId: 'exec-stale', workerId: 'worker-a' });
+
+  await assert.rejects(
+    () => transport.execute(
+      { executionId: 'exec-stale', capability: { id: 'runtime.execute' } },
+      { workerId: 'worker-a', leaseId: first.lease.leaseId, fencingToken: first.lease.fencingToken },
+    ),
+    (error) => error.code === 'LEASE_NOT_ACTIVE',
+  );
+
+  await assert.rejects(
+    () => transport.execute(
+      { executionId: 'exec-stale', capability: { id: 'runtime.execute' } },
+      { workerId: 'worker-a', leaseId: second.lease.leaseId, fencingToken: first.lease.fencingToken },
+    ),
+    (error) => error.code === 'STALE_FENCING_TOKEN',
+  );
+
+  assert.equal(calls, 0);
+  assert.notEqual(second.lease.fencingToken, first.lease.fencingToken);
+});
+
+test('transport fails closed when a requested worker lacks the capability', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  transport.registerWorker({ workerId: 'worker-other', capabilities: ['runtime.other'], execute: async () => ({ status: 'succeeded' }) });
+
+  await assert.rejects(
+    () => transport.execute(
+      { executionId: 'exec-capability-mismatch', capability: { id: 'runtime.execute' } },
+      { workerId: 'worker-other' },
+    ),
+    (error) => error.code === 'NO_HEALTHY_WORKER' && error.retryable === true,
+  );
+});

@@ -53,6 +53,8 @@ import { InMemoryRemoteExecutionTransport } from '../src/remote-execution-transp
 import { RemoteWorkerRegistry } from '../src/remote-worker-registry.js';
 import { RemoteWorkerLeaseManager } from '../src/remote-worker-lease.js';
 import { RemoteWorkerScheduler } from '../src/remote-worker-scheduler.js';
+import { RemoteWorkerFailoverController } from '../src/remote-worker-failover.js';
+import { RemoteWorkerHeartbeatMonitor } from '../src/remote-worker-heartbeat.js';
 
 test('remote backend admits execution through scheduler and propagates ownership into transport', async () => {
   const registry = new RemoteWorkerRegistry();

@@ -149,3 +149,66 @@ test('remote backend requires capability identity when scheduler mode is enabled
   const result = await backend.execute({ executionId: 'exec-capability-required', input: { command: 'node', args: [] } });
   assert.equal(result.error.code, 'CAPABILITY_REQUIRED');
 });
+
+
+test('heartbeat failure reassigns an active execution and recovery resumes it on a live worker', async () => {
+  let now = Date.parse('2026-09-20T00:00:00Z');
+  const registry = new RemoteWorkerRegistry({ clock: () => new Date(now) });
+  const leases = new RemoteWorkerLeaseManager({ clock: () => now, ttlMs: 60_000 });
+  const scheduler = new RemoteWorkerScheduler({ registry, leases, clock: () => now });
+  const failover = new RemoteWorkerFailoverController({ scheduler });
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  let releaseFirst;
+
+  transport.registerWorker({
+    workerId: 'worker-a',
+    capabilities: ['runtime.execute'],
+    execute: async () => {
+      await new Promise((resolve) => { releaseFirst = resolve; });
+      return { status: 'succeeded', output: { worker: 'worker-a' } };
+    },
+  });
+  transport.registerWorker({
+    workerId: 'worker-b',
+    capabilities: ['runtime.execute'],
+    execute: async () => ({ status: 'succeeded', output: { worker: 'worker-b' } }),
+  });
+
+  transport.heartbeat('worker-b');
+  const backend = new RemoteExecutionBackend({ transport, scheduler, maxRecoveryAttempts: 2 });
+  const monitor = new RemoteWorkerHeartbeatMonitor({
+    registry,
+    leaseManager: leases,
+    failoverController: failover,
+    clock: () => now,
+    timeoutMs: 30_000,
+  });
+
+  const pending = backend.execute({
+    executionId: 'exec-heartbeat-recovery',
+    input: { command: 'node', args: [] },
+    capability: { id: 'runtime.execute' },
+  });
+
+  for (let attempt = 0; attempt < 100 && !scheduler.current('exec-heartbeat-recovery'); attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(scheduler.current('exec-heartbeat-recovery').workerId, 'worker-a');
+
+  now += 31_000;
+  const sweep = await monitor.sweep();
+  assert.equal(sweep.lost.length, 1);
+  assert.equal(sweep.lost[0].reassignment.state, 'scheduled');
+  assert.equal(sweep.lost[0].reassignment.workerId, 'worker-b');
+
+  releaseFirst();
+  const result = await pending;
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.workerId, 'worker-b');
+  assert.equal(result.attempt, 2);
+
+  const executionLeases = leases.list().filter((lease) => lease.executionId === 'exec-heartbeat-recovery');
+  assert.equal(executionLeases.length, 2);
+  assert.equal(executionLeases[0].status, 'fenced');
+  assert.equal(executionLeases[1].status, 'released');
+});

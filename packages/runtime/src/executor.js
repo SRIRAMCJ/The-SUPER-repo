@@ -2,7 +2,7 @@ import { createExecutionId } from './events.js';
 import { ExecutionCancellationRegistry } from './cancellation.js';
 
 export class ExecutionEngine {
-  constructor({ registry, events = null, verifier = null, policy = null, backends = null, clock = () => new Date(), cancellation = new ExecutionCancellationRegistry() }) {
+  constructor({ registry, events = null, verifier = null, policy = null, backends = null, clock = () => new Date(), cancellation = new ExecutionCancellationRegistry(), idFactory = createExecutionId }) {
     if (!registry) throw new TypeError('ExecutionEngine requires a capability registry');
     this.registry = registry;
     this.events = events;
@@ -10,7 +10,9 @@ export class ExecutionEngine {
     this.policy = policy;
     this.backends = backends;
     this.clock = clock;
+    if (typeof idFactory !== 'function') throw new TypeError('idFactory must be a function');
     this.cancellation = cancellation;
+    this.idFactory = idFactory;
   }
 
   cancel(executionId, reason = 'Execution cancelled') {
@@ -20,7 +22,7 @@ export class ExecutionEngine {
   async execute(capabilityId, input = {}, context = {}) {
     const entry = this.registry.require(capabilityId);
     const { manifest, handler } = entry;
-    const executionId = context.executionId ?? createExecutionId();
+    const executionId = context.executionId ?? this.idFactory();
     const startedAt = this.clock().toISOString();
 
     if (this.policy) {

@@ -2,9 +2,9 @@ name: Core Tests
 
 on:
   push:
-    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
+    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**', 'fix/**']
   pull_request:
-    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**']
+    branches: [main, 'foundation/**', 'agent/**', 'cli/**', 'feat/**', 'fix/**']
 
 concurrency:
   group: runtime-tests-${{ github.event.pull_request.number || github.ref }}
@@ -45,6 +45,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          failures=0
           for file in packages/runtime/test/*.test.js; do
             echo "=== START $file ==="
             timeout 10s node --test --test-concurrency=1 --test-force-exit "$file"
@@ -54,8 +55,13 @@ jobs:
               exit 124
             elif [ "$status" -ne 0 ]; then
               echo "=== FAIL $file status=$status; continuing ==="
+              failures=$((failures + 1))
             else
               echo "=== PASS $file ==="
             fi
           done
-          exit 0
+          if [ "$failures" -ne 0 ]; then
+            echo "=== RUNTIME DIAGNOSTIC FAILED: $failures test file(s) failed ==="
+            exit "$failures"
+          fi
+          echo "=== RUNTIME DIAGNOSTIC PASSED: all runtime test files passed ==="

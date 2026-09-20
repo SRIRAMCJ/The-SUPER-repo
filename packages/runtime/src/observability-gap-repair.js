@@ -45,13 +45,14 @@ export class ObservabilityGapRepairCoordinator {
     this.#maxAttempts = maxAttempts;
   }
 
-  async repair({ sourceNodeId, fromSourceSequence, toSourceSequence, fencingToken = 0, signal, force = false } = {}) {
+  async repair({ sourceNodeId, fromSourceSequence, toSourceSequence, fencingToken = null, signal, force = false } = {}) {
     validateNode(sourceNodeId);
     validateRange(fromSourceSequence, toSourceSequence);
-    validateFence(fencingToken);
+    if (fencingToken !== null) validateFence(fencingToken);
+    const effectiveFencingToken = fencingToken ?? this.#checkpoint?.get(sourceNodeId)?.fencingToken ?? 0;
     const key = sourceNodeId + ':' + fromSourceSequence + ':' + toSourceSequence;
     if (this.#inflight.has(key)) return this.#inflight.get(key);
-    const operation = this.#run({ sourceNodeId, fromSourceSequence, toSourceSequence, fencingToken, signal, force });
+    const operation = this.#run({ sourceNodeId, fromSourceSequence, toSourceSequence, fencingToken: effectiveFencingToken, signal, force });
     this.#inflight.set(key, operation);
     try { return await operation; } finally { this.#inflight.delete(key); }
   }

@@ -53,7 +53,7 @@ export class ExecutionPlanExecutor {
         const step = plan.steps[index];
         currentStep = step.step;
         if (this.stateStore) await this.stateStore.update(executionId, { status: 'running', nextStep: currentStep, currentInput: current, attempt }, undefined);
-        const result = await this.executionEngine.execute(step.capabilityId, current, { ...context, planExecutionId: executionId, planStep: currentStep });
+        const result = await this.executionEngine.execute(step.capabilityId, current, { ...context, executionId: `${executionId}:step:${currentStep}`, planExecutionId: executionId, planStep: currentStep });
         const entry = { step: currentStep, capabilityId: step.capabilityId, attempt, result };
         results.push(entry);
 

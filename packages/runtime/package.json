@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.js",
-  "scripts": { "test": "node --test --test-concurrency=1" }
+  "scripts": { "test": "node --test" }
 }

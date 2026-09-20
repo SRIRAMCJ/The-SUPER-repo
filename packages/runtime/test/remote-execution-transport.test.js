@@ -133,3 +133,31 @@ test('transport fails closed when a requested worker lacks the capability', asyn
     (error) => error.code === 'NO_HEALTHY_WORKER' && error.retryable === true,
   );
 });
+
+
+test('transport fences active execution ownership when a worker is unregistered', async () => {
+  const registry = new RemoteWorkerRegistry();
+  const leases = new RemoteWorkerLeaseManager();
+  const transport = new InMemoryRemoteExecutionTransport({ workerRegistry: registry, leaseManager: leases });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  transport.registerWorker({
+    workerId: 'worker-dead',
+    capabilities: ['runtime.execute'],
+    execute: async () => {
+      await gate;
+      return { status: 'succeeded' };
+    },
+  });
+
+  const pending = transport.execute({ executionId: 'exec-unregister', capability: { id: 'runtime.execute' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const remote = transport.inspect('rex-1');
+  assert.equal(remote.workerId, 'worker-dead');
+
+  transport.unregisterWorker('worker-dead');
+  release();
+
+  await assert.rejects(() => pending, (error) => error.code === 'LEASE_NOT_ACTIVE');
+  assert.equal(leases.get(remote.leaseId).status, 'fenced');
+});

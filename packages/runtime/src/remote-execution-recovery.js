@@ -55,7 +55,8 @@ export class RemoteExecutionRecovery {
         };
       }
 
-      schedule = this.#scheduler.reassign({
+      const activeSchedule = this.#scheduler.current?.(executionId);
+      schedule = activeSchedule ?? this.#scheduler.reassign({
         executionId,
         capabilityId,
         failedWorkerId: schedule.workerId,

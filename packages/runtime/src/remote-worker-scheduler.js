@@ -65,7 +65,7 @@ export class RemoteWorkerScheduler {
       retryable: true,
     });
 
-    const lease = this.#leases.acquire({ executionId, workerId: worker.workerId });
+    const lease = this.#leases.acquire({ executionId, workerId: worker.workerId, capabilityId });
     if (lease.state !== 'acquired') return this.#result('conflict', {
       code: lease.code ?? 'LEASE_CONFLICT',
       executionId,

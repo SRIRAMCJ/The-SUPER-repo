@@ -15,7 +15,7 @@ export class RemoteWorkerLeaseManager {
     this.#ttlMs = ttlMs;
   }
 
-  acquire({ executionId, workerId } = {}) {
+  acquire({ executionId, workerId, capabilityId = null } = {}) {
     if (typeof executionId !== 'string' || !executionId.trim() || typeof workerId !== 'string' || !workerId.trim()) {
       throw new TypeError('executionId and workerId are required');
     }
@@ -27,6 +27,7 @@ export class RemoteWorkerLeaseManager {
       leaseId: `lease-${++this.#sequence}`,
       executionId,
       workerId,
+      capabilityId,
       status: 'active',
       fencingToken: `fence-${++this.#fenceSequence}`,
       acquiredAt: now,

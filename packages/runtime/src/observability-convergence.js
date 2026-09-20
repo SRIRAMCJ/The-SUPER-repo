@@ -23,7 +23,7 @@ export class ObservabilityConvergenceKernel {
 
   constructor({ local, remote, integrity = ObservabilityIntegrityKernel, clock = () => new Date(), idFactory = () => globalThis.crypto.randomUUID(), maxHistory = 1_000 } = {}) {
     if (!local || typeof local.snapshot !== 'function') throw new TypeError('local must expose snapshot()');
-    if (!remote || typeof remote.inspect !== 'function' || typeof remote.repair !== 'function') throw new TypeError('remote must expose inspect() and repair()');
+    if (!remote || typeof remote.inspect !== 'function') throw new TypeError('remote must expose inspect()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');
     if (!integrity || typeof integrity.verifyRange !== 'function') throw new TypeError('integrity must expose verifyRange()');
@@ -65,7 +65,7 @@ export class ObservabilityConvergenceKernel {
       const remote = await this.#remote.inspect({ sourceNodeId, signal });
       if (signal?.aborted) return this.#finish({ requestId, sourceNodeId, state: CONVERGENCE_STATES.cancelled });
       const local = this.#local.snapshot();
-      const comparison = compareSnapshots(local, remote);
+      const comparison = compareSnapshots(local, remote, sourceNodeId);
       if (comparison.state === 'converged') {
         if (comparison.digest && remote.digest && comparison.digest !== remote.digest) {
           this.#state = CONVERGENCE_STATES.divergent;
@@ -77,6 +77,10 @@ export class ObservabilityConvergenceKernel {
       if (!force && comparison.state === 'blocked') {
         this.#state = CONVERGENCE_STATES.blocked;
         return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison });
+      }
+      if (typeof this.#remote.repair !== 'function') {
+        this.#state = CONVERGENCE_STATES.failed;
+        return this.#finish({ requestId, sourceNodeId, state: this.#state, comparison, error: { code: 'REPAIR_UNAVAILABLE', message: 'remote repair is required for divergent state' } });
       }
       const repair = await this.#remote.repair({
         sourceNodeId,
@@ -94,7 +98,7 @@ export class ObservabilityConvergenceKernel {
       }
       const after = await this.#remote.inspect({ sourceNodeId, signal });
       const finalLocal = this.#local.snapshot();
-      const finalComparison = compareSnapshots(finalLocal, after);
+      const finalComparison = compareSnapshots(finalLocal, after, sourceNodeId);
       if (finalComparison.state === 'converged' && finalComparison.expectedDigest) {
         const verified = await this.#remote.verifyDigest?.({ sourceNodeId, expectedDigest: finalComparison.expectedDigest, signal }) ?? { valid: true };
         if (!verified.valid) {
@@ -122,11 +126,11 @@ export class ObservabilityConvergenceKernel {
   }
 }
 
-function compareSnapshots(local, remote) {
+function compareSnapshots(local, remote, sourceNodeId) {
   const localCheckpoint = local?.checkpoint?.checkpoints ?? local?.checkpoints ?? {};
   const remoteCheckpoint = remote?.checkpoint?.checkpoints ?? remote?.checkpoints ?? {};
-  const localValue = localCheckpoint[remote.sourceNodeId] ?? localCheckpoint[remote.nodeId] ?? null;
-  const remoteValue = remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? remote.checkpoint ?? null;
+  const localValue = localCheckpoint[sourceNodeId] ?? localCheckpoint[remote.sourceNodeId] ?? localCheckpoint[remote.nodeId] ?? null;
+  const remoteValue = remoteCheckpoint[sourceNodeId] ?? remoteCheckpoint[remote.sourceNodeId] ?? remoteCheckpoint[remote.nodeId] ?? remote.checkpoint ?? null;
   if (!localValue || !remoteValue) {
     return { state: 'blocked', reason: 'CHECKPOINT_MISSING', fromSourceSequence: 1, toSourceSequence: 0 };
   }

@@ -64,3 +64,5 @@ export { ExecutionBackendRegistry, SandboxExecutionBackend, EXECUTION_BACKEND_SC
 export { RemoteExecutionBackend, REMOTE_EXECUTION_BACKEND_SCHEMA_VERSION } from './remote-execution-backend.js';
 export { InMemoryRemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION } from './remote-execution-transport.js';
 export { RemoteWorkerRegistry, REMOTE_WORKER_PROTOCOL_SCHEMA_VERSION } from './remote-worker-registry.js';
+
+export { RemoteWorkerLeaseManager, REMOTE_WORKER_LEASE_SCHEMA_VERSION } from './remote-worker-lease.js';

@@ -144,7 +144,7 @@ test('remote backend recovers retryable worker failure by reassigning to another
 });
 
 test('remote backend requires capability identity when scheduler mode is enabled', async () => {
-  const scheduler = { schedule: () => ({ state: 'scheduled', workerId: 'worker-a', leaseId: 'lease-a', fencingToken: 'fence-a' }) };
+  const scheduler = { schedule: () => ({ state: 'scheduled', workerId: 'worker-a', leaseId: 'lease-a', fencingToken: 'fence-a' }), reassign: () => ({ state: 'scheduled', workerId: 'worker-a', leaseId: 'lease-a', fencingToken: 'fence-a' }) };
   const backend = new RemoteExecutionBackend({ scheduler, transport: { execute: async () => ({ status: 'succeeded' }) } });
   const result = await backend.execute({ executionId: 'exec-capability-required', input: { command: 'node', args: [] } });
   assert.equal(result.error.code, 'CAPABILITY_REQUIRED');

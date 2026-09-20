@@ -54,7 +54,7 @@ export class RuntimeOperations {
 
     const failures = checks.filter((check) => check.status === 'fail');
     const warnings = checks.filter((check) => check.status === 'warning');
-    const status = failures.length ? 'failed' : warnings.length ? 'degraded' : 'passed';
+    const status = failures.length ? 'failed' : 'passed';
     return Object.freeze(structuredClone({
       schemaVersion: SCHEMA_VERSION,
       type: 'runtime-diagnostics',
@@ -77,7 +77,7 @@ function checkComponent(checks, id, component, methods, optional = false) {
   checks.push({
     id: `component.${id}`,
     severity: optional ? 'info' : 'error',
-    status: available ? 'pass' : optional ? 'not_configured' : 'fail',
+    status: available ? 'pass' : optional ? 'warning' : 'fail',
     message: available ? `${id} is available` : `${id} is ${optional ? 'not configured' : 'unavailable'}`,
     details: { configured: Boolean(component), requiredMethods: methods }
   });

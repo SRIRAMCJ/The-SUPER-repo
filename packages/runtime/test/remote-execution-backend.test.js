@@ -176,7 +176,6 @@ test('heartbeat failure reassigns an active execution and recovery resumes it on
     execute: async () => ({ status: 'succeeded', output: { worker: 'worker-b' } }),
   });
 
-  transport.heartbeat('worker-b');
   const backend = new RemoteExecutionBackend({ transport, scheduler, maxRecoveryAttempts: 2 });
   const monitor = new RemoteWorkerHeartbeatMonitor({
     registry,
@@ -198,6 +197,7 @@ test('heartbeat failure reassigns an active execution and recovery resumes it on
   assert.equal(scheduler.current('exec-heartbeat-recovery').workerId, 'worker-a');
 
   now += 31_000;
+  transport.heartbeat('worker-b');
   const sweep = await monitor.sweep();
   assert.equal(sweep.lost.length, 1);
   assert.equal(sweep.lost[0].reassignment.state, 'scheduled');

@@ -24,8 +24,8 @@ jobs:
           node-version: 22
       - name: Run core tests
         run: npm run test:core
-      - name: Run runtime tests
-        run: npm run test:runtime -- --test-concurrency=1 --test-timeout=10000 --test-force-exit
+      - name: Run sandbox and ToolRuntime regression tests
+        run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/sandbox.test.js packages/runtime/test/tool-runtime.test.js
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

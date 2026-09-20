@@ -4,12 +4,13 @@ const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
 export class ToolRuntime {
   #records = new Map();
 
-  constructor({ registry, policyEngine = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
+  constructor({ registry, policyEngine = null, securityGate = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
     if (!registry || typeof registry.require !== 'function') throw new TypeError('ToolRuntime requires a capability registry');
     if (policyEngine && typeof policyEngine.authorize !== 'function') throw new TypeError('policyEngine must expose authorize()');
+    if (securityGate && typeof securityGate.authorize !== 'function') throw new TypeError('securityGate must expose authorize()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
-    this.registry = registry; this.policyEngine = policyEngine; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
+    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
   }
 
   async execute(toolId, input = {}, context = {}) {
@@ -18,6 +19,12 @@ export class ToolRuntime {
     let entry;
     try { entry = this.registry.require(toolId); } catch (error) { return this.#record(failure('TOOL_UNAVAILABLE', errorMessage(error), executionId)); }
     if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId));
+
+    if (this.securityGate) {
+      const security = this.securityGate.authorize({ ...entry.manifest, id: toolId }, context);
+      if (security.allowed !== true) return this.#record(failure(security.decision === 'invalid' ? 'SECURITY_INVALID_CONTEXT' : 'SECURITY_DENIED', security.reason ?? 'Security gate denied tool execution', executionId));
+    }
+
     const policy = this.policyEngine?.authorize({ id: toolId, name: entry.manifest.name, risk: entry.manifest.risk ?? 'none', permissions: entry.manifest.permissions ?? [] }, context);
     if (policy && policy.allowed !== true) return this.#record(failure('FORBIDDEN', policy.reason ?? 'Tool execution denied', executionId));
     if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));

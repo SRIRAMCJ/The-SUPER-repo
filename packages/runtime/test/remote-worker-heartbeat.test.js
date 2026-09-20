@@ -38,7 +38,7 @@ test('heartbeat loss fences active worker executions and emits recovery signal',
   const registry = new RemoteWorkerRegistry({ clock: () => new Date(now) });
   registry.register({ workerId: 'w1', capabilities: ['runtime.execute'] });
   const leases = new RemoteWorkerLeaseManager({ clock: () => now, ttlMs: 60_000 });
-  const acquired = leases.acquire({ executionId: 'exec-lost', workerId: 'w1' });
+  const acquired = leases.acquire({ executionId: 'exec-lost', workerId: 'w1', capabilityId: 'runtime.execute' });
   const lost = [];
   now += 31_000;
   const monitor = new RemoteWorkerHeartbeatMonitor({
@@ -54,4 +54,5 @@ test('heartbeat loss fences active worker executions and emits recovery signal',
   assert.equal(result.lost[0].executionId, 'exec-lost');
   assert.equal(leases.get(acquired.lease.leaseId).status, 'fenced');
   assert.equal(lost[0].leaseId, acquired.lease.leaseId);
+  assert.equal(lost[0].capabilityId, 'runtime.execute');
 });

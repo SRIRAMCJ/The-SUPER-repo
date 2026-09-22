@@ -126,3 +126,14 @@ test('bounds replay nonce memory', () => {
     assert.equal(auth.authenticate({ identity, envelope, signature: signed.signature, nonce }).ok, true);
   }
 });
+
+test('binds the replay nonce to the authentication signature', () => {
+  const now = 70_000;
+  const { keyRing, identity, envelope } = fixture(now);
+  const auth = new RemoteAuthenticationSession({ keyRing, clock: () => now });
+  const signed = createSignedEnvelope({ identity, envelope, keyRing, nonce: 'signed-nonce' });
+  assert.equal(
+    auth.authenticate({ identity, envelope, signature: signed.signature, nonce: 'different-nonce' }).code,
+    'INVALID_SIGNATURE',
+  );
+});

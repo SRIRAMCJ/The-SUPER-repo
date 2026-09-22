@@ -213,3 +213,21 @@ test('transport rejects incompatible worker protocol versions', () => {
     (error) => error.code === 'UNSUPPORTED_PROTOCOL_VERSION',
   );
 });
+
+
+test('transport assigns unique implicit request ids across repeated execution attempts', async () => {
+  const transport = new InMemoryRemoteExecutionTransport({ clock: () => 1000 });
+  let calls = 0;
+  transport.registerWorker({
+    workerId: 'request-id-worker',
+    execute: async () => {
+      calls += 1;
+      return { status: 'succeeded' };
+    },
+  });
+
+  await transport.execute({ executionId: 'same-execution' });
+  await transport.execute({ executionId: 'same-execution' });
+
+  assert.equal(calls, 2);
+});

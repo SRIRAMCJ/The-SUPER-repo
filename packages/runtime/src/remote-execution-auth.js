@@ -137,6 +137,7 @@ export function createSignedEnvelope({ identity, envelope, keyRing, nonce = rand
   return Object.freeze({
     authVersion: AUTH_VERSION,
     identity: structuredClone(identity),
+    envelope: structuredClone(envelope),
     nonce,
     signature: signRemoteEnvelope({ identity, envelope, secret }),
   });

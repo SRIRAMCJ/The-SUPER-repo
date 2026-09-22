@@ -11,6 +11,7 @@ export const DISTRIBUTED_EFFECT_STATES = Object.freeze(['pending', 'committed', 
 export class DistributedEffectLedger {
   #records = new Map();
   #lockPath;
+  #memoryTail = Promise.resolve();
 
   constructor({ filePath = null, clock = () => Date.now(), ttlMs = DEFAULT_TTL_MS, lockRetryMs = 10, lockTimeoutMs = 5000, lockStaleMs = 30000, maxRecords = 10000 } = {}) {
     if (filePath !== null && (typeof filePath !== 'string' || !filePath.trim())) throw new TypeError('filePath must be null or a non-empty string');
@@ -59,7 +60,7 @@ export class DistributedEffectLedger {
       if (!current) return freeze({ state: 'not_found' });
       if (current.status !== 'pending') return freeze({ state: current.status, record: current });
       if (!force && current.expiresAt > this.clock()) return freeze({ state: 'in_progress', record: current });
-      const recovered = { ...current, status: 'failed', claimToken: null, error: { code: 'EFFECT_CLAIM_EXPIRED', message: 'Effect claim expired before commit', retryable: true }, retryable: true, updatedAt: this.clock() };
+      const recovered = { ...current, status: 'failed', claimToken: null, expiresAt: this.clock() + this.ttlMs, error: { code: 'EFFECT_CLAIM_EXPIRED', message: 'Effect claim expired before commit', retryable: true }, retryable: true, updatedAt: this.clock() };
       await this.#append({ op: 'recover', record: recovered }); this.#records.set(key, freeze(recovered));
       return freeze({ state: 'recovered', record: recovered });
     });
@@ -105,7 +106,11 @@ export class DistributedEffectLedger {
   }
 
   async #atomic(operation) {
-    if (!this.filePath) return operation();
+    if (!this.filePath) {
+      const run = this.#memoryTail.then(operation, operation);
+      this.#memoryTail = run.catch(() => {});
+      return run;
+    }
     const deadline = this.clock() + this.lockTimeoutMs;
     while (true) {
       try {

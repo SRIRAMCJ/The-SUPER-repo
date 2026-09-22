@@ -1,7 +1,7 @@
 const SCHEMA_VERSION = '0.1.0';
 
 export class VerticalMissionEngine {
-  constructor({ planner, admission, orchestrator, verifier = null, artifactStore = null, events = null, clock = () => new Date(), idFactory = defaultMissionId } = {}) {
+  constructor({ planner, admission, orchestrator, verifier = null, artifactStore = null, missionStore = null, events = null, clock = () => new Date(), idFactory = defaultMissionId } = {}) {
     if (!planner || typeof planner.plan !== 'function') throw new TypeError('VerticalMissionEngine requires planner');
     if (!admission || typeof admission.admit !== 'function') throw new TypeError('VerticalMissionEngine requires admission');
     if (!orchestrator || typeof orchestrator.execute !== 'function') throw new TypeError('VerticalMissionEngine requires orchestrator');
@@ -10,7 +10,7 @@ export class VerticalMissionEngine {
     if (events && typeof events.emit !== 'function') throw new TypeError('events must expose emit()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     this.planner = planner; this.admission = admission; this.orchestrator = orchestrator;
-    this.verifier = verifier; this.artifactStore = artifactStore; this.events = events;
+    this.verifier = verifier; this.artifactStore = artifactStore; this.missionStore = missionStore; this.events = events;
     this.clock = clock; this.idFactory = idFactory; this.missions = new Map();
   }
 
@@ -28,13 +28,13 @@ export class VerticalMissionEngine {
 
     try {
       const plan = this.planner.plan({ ...request, context: { ...request.context, ...context } });
-      record.plan = clone(plan);
+      record.plan = clone(plan); await this.#persist(record);
       if (plan.executionDecision?.status !== 'ready') {
         return this.#finish(record, plan.executionDecision?.status === 'blocked' ? 'rejected' : 'failed',
           { code: 'MISSION_PLAN_NOT_READY', message: plan.executionDecision?.reasons?.[0]?.message ?? 'Mission plan is not executable', details: plan.executionDecision?.reasons ?? [] });
       }
 
-      record.status = 'admitting'; this.#store(record);
+      record.status = 'admitting'; await this.#persist(record);
       const admission = this.admission.admit(plan, { ...context, missionId });
       record.admission = clone(admission);
       if (admission.status !== 'ready') {
@@ -42,14 +42,14 @@ export class VerticalMissionEngine {
           { code: 'MISSION_ADMISSION_FAILED', message: admission.reasons?.[0]?.message ?? 'Mission admission failed', details: admission.reasons ?? [] });
       }
 
-      record.status = 'executing'; this.#store(record);
+      record.status = 'executing'; await this.#persist(record);
       const execution = await this.orchestrator.execute(plan, input, { ...context, missionId }, options);
       record.execution = clone(execution);
       if (execution.status === 'cancelled') return this.#finish(record, 'cancelled', execution.execution?.error ?? { code: 'MISSION_CANCELLED', message: 'Mission execution cancelled' });
       if (execution.status !== 'succeeded') return this.#finish(record, execution.status === 'rejected' ? 'rejected' : 'failed',
         execution.execution?.error ?? { code: 'MISSION_EXECUTION_FAILED', message: 'Mission execution failed' });
 
-      record.status = 'verifying'; this.#store(record);
+      record.status = 'verifying'; await this.#persist(record);
       if (this.verifier) {
         const output = execution.execution?.result?.output ?? execution.execution?.output ?? execution.execution?.result ?? execution;
         record.verification = clone(await this.verifier.verify({ capability: plan, input, output, context: { ...context, missionId, planId: plan.planId, executionId: execution.executionId } }));
@@ -57,7 +57,7 @@ export class VerticalMissionEngine {
           { code: 'MISSION_VERIFICATION_FAILED', message: 'Mission output failed verification', details: record.verification.failures });
       }
 
-      record.status = 'delivering'; this.#store(record);
+      record.status = 'delivering'; await this.#persist(record);
       const payload = { schemaVersion: SCHEMA_VERSION, type: 'mission-artifact', missionId, planId: plan.planId,
         executionId: execution.executionId, goal: plan.goal,
         output: clone(execution.execution?.result?.output ?? execution.execution?.output ?? execution.execution?.result ?? execution),
@@ -84,12 +84,14 @@ export class VerticalMissionEngine {
       artifacts: record.artifacts.map(a => ({ type: a.type, missionId: a.missionId, planId: a.planId, executionId: a.executionId })),
       error: error ? clone(error) : null
     });
-    this.#store(record);
+    await this.#persist(record);
     this.#emit({ type: status === 'succeeded' ? 'mission.vertical.completed' : 'mission.vertical.failed', missionId: record.missionId, status, data: clone(record.report), error: error ?? undefined });
     return clone(record);
   }
 
   #store(record) { this.missions.set(record.missionId, structuredClone(record)); }
+  async #persist(record) { this.#store(record); if (this.missionStore) { const saved = await this.missionStore.save(record, record.version ?? null); record.version = saved.version; record.updatedAt = saved.updatedAt; this.#store(record); } }
+  async recover(missionId) { if (!this.missionStore) return this.getMission(missionId); const record = await this.missionStore.get(missionId); if (record) this.#store(record); return clone(record); }
   #emit(event) { this.events?.emit({ schemaVersion: SCHEMA_VERSION, timestamp: this.clock().toISOString(), ...event }); }
 }
 

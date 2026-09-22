@@ -86,3 +86,5 @@ export { DurableExecutionStateMachine, DURABLE_EXECUTION_STATE_MACHINE_SCHEMA_VE
 export { DistributedEffectLedger, DISTRIBUTED_EFFECT_LEDGER_SCHEMA_VERSION, DISTRIBUTED_EFFECT_STATES, fingerprintEffect } from './distributed-effect-ledger.js';
 
 export { DistributedCoordinationKernel, DISTRIBUTED_COORDINATION_SCHEMA_VERSION, DISTRIBUTED_COORDINATION_STATES, coordinationFingerprint } from './distributed-coordination-kernel.js';
+
+export { DurableObservabilityPipeline, DURABLE_OBSERVABILITY_SCHEMA_VERSION, OBSERVABILITY_EVENT_STATES } from './durable-observability.js';

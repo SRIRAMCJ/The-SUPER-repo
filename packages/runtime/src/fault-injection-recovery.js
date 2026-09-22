@@ -55,7 +55,7 @@ export class RecoveryController {
   #history = [];
   #clock;
   #maxHistory;
-  constructor({ clock = () => Date.now(), maxHistory = 5000 } = {}) { this.#clock=clock; this.#maxHistory=maxHistory; }
+  constructor({ clock = () => Date.now(), maxHistory = 5000 } = {}) {\n    if (typeof clock !== 'function') throw new TypeError('clock must be a function');\n    if (!Number.isInteger(maxHistory) || maxHistory < 1) throw new TypeError('maxHistory must be a positive integer');\n    this.#clock=clock; this.#maxHistory=maxHistory;\n  }
   async recover(key, { operation, attempts = 3, backoffMs = 0, shouldRetry = () => true, onAttempt = null } = {}) {
     const id = String(key);
     if (typeof operation !== 'function') throw new TypeError('operation must be a function');
@@ -94,5 +94,5 @@ export async function withFaultInjection(operation, { faults = null, context = {
 }
 
 function publicScenario(s) { const { match, ...safe } = s; return Object.freeze({ ...safe }); }
-function fingerprintContext(value) { return createHash('sha256').update(JSON.stringify(value, Object.keys(value ?? {}).sort())).digest('hex'); }
+function fingerprintContext(value) { return createHash('sha256').update(canonicalize(value)).digest('hex'); }\nfunction canonicalize(value) {\n  if (value === null || typeof value !== 'object') return JSON.stringify(value);\n  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;\n  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(',')}}`;\n}
 function clone(value) { return structuredClone(value); }

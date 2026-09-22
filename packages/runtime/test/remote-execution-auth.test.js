@@ -56,8 +56,9 @@ test('rejects credentials signed with an unknown key', () => {
   const keyRing = new RemoteAuthKeyRing();
   keyRing.addKey({ keyId: 'key-2', secret: SECRET, active: true });
   const auth = new RemoteAuthenticationSession({ keyRing, clock: () => now });
-  const signed = createSignedEnvelope({ identity, envelope, keyRing: new RemoteAuthKeyRing() });
-  assert.equal(signed, undefined);
+  const unknownKeyRing = new RemoteAuthKeyRing();
+  unknownKeyRing.addKey({ keyId: 'key-2', secret: SECRET, active: true });
+  assert.throws(() => createSignedEnvelope({ identity, envelope, keyRing: unknownKeyRing }), error => error.code === 'UNKNOWN_KEY');
 });
 
 test('rejects expired credentials and clock-skewed credentials', () => {

@@ -34,6 +34,9 @@ jobs:
         run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/remote-capability-attestation.test.js
       - name: Run durable execution state machine regressions
         run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/durable-execution-state-machine.test.js
+      - name: Run distributed coordination regression
+        run: node --test packages/runtime/test/distributed-coordination-kernel.test.js
+
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

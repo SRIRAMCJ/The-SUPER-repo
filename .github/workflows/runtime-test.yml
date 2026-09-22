@@ -40,6 +40,9 @@ jobs:
       - name: Run durable observability regression
         run: node --test packages/runtime/test/durable-observability.test.js
 
+      - name: Run fault injection and recovery regression
+        run: node --test packages/runtime/test/fault-injection-recovery.test.js
+
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

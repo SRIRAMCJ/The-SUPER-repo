@@ -37,6 +37,9 @@ jobs:
       - name: Run distributed coordination regression
         run: node --test packages/runtime/test/distributed-coordination-kernel.test.js
 
+      - name: Run durable observability regression
+        run: node --test packages/runtime/test/durable-observability.test.js
+
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

@@ -210,6 +210,7 @@ export class InMemoryRemoteExecutionTransport {
 
   #authenticateControllerRequest(authentication, envelope) {
     if (!authentication?.identity || authentication.identity.role !== 'controller') throw Object.assign(new Error('Controller authentication is required'), { code: 'AUTHENTICATION_REQUIRED' });
+    if (!authentication.envelope || canonicalizeEnvelope(authentication.envelope) !== canonicalizeEnvelope(envelope)) throw Object.assign(new Error('Authentication envelope does not match execution request'), { code: 'AUTH_ENVELOPE_MISMATCH' });
     const result = this.#authSession.authenticate({ identity: authentication.identity, envelope, signature: authentication.signature, nonce: authentication.nonce });
     if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
     const authorization = this.#authSession.authorize({ identity: authentication.identity, method: envelope.method });
@@ -306,3 +307,14 @@ function normalizeWorkerResult(result) {
 }
 
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }
+
+
+function canonicalizeEnvelope(envelope) {
+  return JSON.stringify(sortObject(envelope));
+}
+
+function sortObject(value) {
+  if (Array.isArray(value)) return value.map(sortObject);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortObject(value[key])]));
+}

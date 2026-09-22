@@ -46,3 +46,4 @@ export { SharedContext } from './shared-context.js';
 export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';
+\nexport { FileMissionStore, MISSION_STORE_SCHEMA_VERSION } from './mission-store.js';\nexport { VerticalMissionEngine, VERTICAL_MISSION_SCHEMA_VERSION } from './vertical-mission.js';\n

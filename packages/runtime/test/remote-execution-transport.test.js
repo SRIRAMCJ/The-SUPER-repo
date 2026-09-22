@@ -57,8 +57,12 @@ test('transport rejects duplicate worker registration', () => {
 
 
 import { RemoteWorkerRegistry } from '../src/remote-worker-registry.js';
-import { RemoteAuthKeyRing, createRemoteIdentity, createProtocolEnvelope, createSignedEnvelope } from '../src/index.js';
+import { RemoteAuthKeyRing, createRemoteIdentity, createProtocolEnvelope, createSignedEnvelope, createCapabilityAttestation } from '../src/index.js';
 import { RemoteWorkerLeaseManager } from '../src/remote-worker-lease.js';
+function createWorkerAttestation({ identity, keyRing, capabilities, now }) {
+  return createCapabilityAttestation({ identity, capabilities, protocolVersions: ['1.0'], keyRing, nonce: `attest-${identity.principalId}`, issuedAt: now - 5, expiresAt: now + 60_000 });
+}
+
 
 test('transport uses scheduler-issued lease and fencing token to dispatch to the selected worker', async () => {
   const registry = new RemoteWorkerRegistry();
@@ -232,11 +236,13 @@ test('transport authenticates worker identity during registration and controller
     timestamp: now,
   });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-nonce' });
+  const capabilityAttestation = createWorkerAttestation({ identity: workerIdentity, keyRing, capabilities: ['runtime.execute'], now });
   transport.registerWorker({
     workerId: 'secure-worker',
     capabilities: ['runtime.execute'],
     identity: workerIdentity,
     authentication: registrationAuth,
+    capabilityAttestation,
     execute: async () => ({ status: 'succeeded', output: { authenticated: true } }),
   });
 
@@ -268,7 +274,8 @@ test('transport fails closed on tampered authenticated execution requests', asyn
   const transport = new InMemoryRemoteExecutionTransport({ clock: () => now, authKeyRing: keyRing, authTrustedIdentities: [controllerIdentity] });
   const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-worker-tamper', method: 'heartbeat', payload: { workerId: 'worker-tamper', capabilities: ['runtime.execute'] }, timestamp: now });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-tamper' });
-  transport.registerWorker({ workerId: 'worker-tamper', capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
+  const capabilityAttestation = createWorkerAttestation({ identity: workerIdentity, keyRing, capabilities: ['runtime.execute'], now });
+  transport.registerWorker({ workerId: 'worker-tamper', capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, capabilityAttestation, execute: async () => ({ status: 'succeeded' }) });
 
   const signedRequest = { executionId: 'tamper-exec', requestId: 'tamper-request', capability: { id: 'runtime.execute' } };
   const signedEnvelope = createProtocolEnvelope({ requestId: signedRequest.requestId, method: 'execute', executionId: signedRequest.executionId, payload: signedRequest, timestamp: now, deadlineAt: null, traceId: null });
@@ -304,7 +311,8 @@ test('transport rejects an authenticated but untrusted controller identity', asy
   const transport = new InMemoryRemoteExecutionTransport({ clock: () => now, authKeyRing: keyRing, authTrustedIdentities: [trustedController] });
   const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-untrusted', method: 'heartbeat', payload: { workerId: workerIdentity.principalId, capabilities: ['runtime.execute'] }, timestamp: now });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-untrusted' });
-  transport.registerWorker({ workerId: workerIdentity.principalId, capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
+  const capabilityAttestation = createWorkerAttestation({ identity: workerIdentity, keyRing, capabilities: ['runtime.execute'], now });
+  transport.registerWorker({ workerId: workerIdentity.principalId, capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, capabilityAttestation, execute: async () => ({ status: 'succeeded' }) });
   const request = { executionId: 'untrusted-exec', requestId: 'untrusted-request', capability: { id: 'runtime.execute' } };
   const envelope = createProtocolEnvelope({ requestId: request.requestId, method: 'execute', executionId: request.executionId, payload: request, timestamp: now });
   const authentication = createSignedEnvelope({ identity: controllerIdentity, envelope, keyRing, nonce: 'untrusted-controller' });

@@ -65,10 +65,10 @@ test('vertical mission recovery resumes unfinished graph work', async () => {
     missionStore
   });
   const first = await engine.execute(mission());
-  assert.equal(first.status, 'failed');
+  assert.equal(first.status, 'executing');
   assert.deepEqual(calls, ['inspect', 'build']);
   const inspection = await engine.recover(first.missionExecutionId);
-  assert.equal(inspection.recovery.resumable, false);
+  assert.equal(inspection.recovery.resumable, true);
   const recovered = await engine.recover(first.missionExecutionId, { resume: true });
   assert.equal(recovered.status, 'succeeded');
   assert.deepEqual(calls, ['inspect', 'build', 'build']);

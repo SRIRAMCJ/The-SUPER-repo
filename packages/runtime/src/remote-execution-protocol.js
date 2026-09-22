@@ -41,6 +41,9 @@ export function validateProtocolEnvelope(envelope, { now = Date.now(), supported
   if (typeof envelope.requestId !== 'string' || !envelope.requestId.trim()) return protocolError('INVALID_REQUEST_ID');
   if (!METHODS.has(envelope.method)) return protocolError('UNSUPPORTED_METHOD');
   if (!Number.isFinite(envelope.timestamp)) return protocolError('INVALID_TIMESTAMP');
+  if (envelope.executionId !== null && (typeof envelope.executionId !== 'string' || !envelope.executionId.trim())) return protocolError('INVALID_EXECUTION_ID');
+  if (envelope.deadlineAt !== null && !Number.isFinite(envelope.deadlineAt)) return protocolError('INVALID_DEADLINE');
+  if (!envelope.payload || typeof envelope.payload !== 'object' || Array.isArray(envelope.payload)) return protocolError('INVALID_PAYLOAD');
   if (Math.abs(now - envelope.timestamp) > maxClockSkewMs) return protocolError('CLOCK_SKEW');
   if (envelope.deadlineAt !== null && Number.isFinite(envelope.deadlineAt) && now > envelope.deadlineAt) return protocolError('DEADLINE_EXCEEDED', true);
   return { ok: true, code: 'VALID' };
@@ -67,6 +70,14 @@ export class RemoteProtocolSession {
     this.#maxClockSkewMs = maxClockSkewMs;
   }
 
+  validate(envelope) {
+    return validateProtocolEnvelope(envelope, {
+      now: this.#clock(),
+      supportedVersions: this.#supportedVersions,
+      maxClockSkewMs: this.#maxClockSkewMs,
+    });
+  }
+
   negotiate(peerVersions) {
     const result = negotiateProtocol({ offered: peerVersions, supported: this.#supportedVersions });
     if (result.state === 'negotiated') this.#negotiatedVersion = result.protocolVersion;
@@ -74,11 +85,7 @@ export class RemoteProtocolSession {
   }
 
   accept(envelope) {
-    const validation = validateProtocolEnvelope(envelope, {
-      now: this.#clock(),
-      supportedVersions: this.#supportedVersions,
-      maxClockSkewMs: this.#maxClockSkewMs,
-    });
+    const validation = this.validate(envelope);
     if (!validation.ok) return validation;
     if (this.#negotiatedVersion && envelope.protocolVersion !== this.#negotiatedVersion) return protocolError('PROTOCOL_NOT_NEGOTIATED');
     if (this.#seenRequests.has(envelope.requestId)) return protocolError('DUPLICATE_REQUEST', true);

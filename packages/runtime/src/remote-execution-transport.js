@@ -1,7 +1,7 @@
 import { createProtocolEnvelope, RemoteProtocolSession, REMOTE_EXECUTION_PROTOCOL_VERSION } from './remote-execution-protocol.js';
 import { RemoteAuthenticationSession } from './remote-execution-auth.js';
 
-const SCHEMA_VERSION = '0.3.0';
+const SCHEMA_VERSION = '0.4.0';
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
 
 export const REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION = SCHEMA_VERSION;

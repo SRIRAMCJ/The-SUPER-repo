@@ -91,3 +91,4 @@ export { DurableObservabilityPipeline, DURABLE_OBSERVABILITY_SCHEMA_VERSION, OBS
 
 export { FaultInjectionEngine, RecoveryController, withFaultInjection, FAULT_INJECTION_SCHEMA_VERSION, FAULT_PHASES, RECOVERY_OUTCOMES } from './fault-injection-recovery.js';
 export { VerticalMissionEngine, VERTICAL_MISSION_SCHEMA_VERSION } from './vertical-mission.js';
+export { FileMissionStore, MISSION_STORE_SCHEMA_VERSION } from './mission-store.js';

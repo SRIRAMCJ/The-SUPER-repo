@@ -100,3 +100,29 @@ test('supports key rotation without accepting retired keys', () => {
   keyRing.retire('key-1');
   assert.equal(keyRing.secretFor('key-1'), null);
 });
+
+
+test('requires an explicitly trusted identity when configured', () => {
+  const now = 50_000;
+  const keyRing = new RemoteAuthKeyRing();
+  keyRing.addKey({ keyId: 'key-1', secret: SECRET, active: true });
+  const trusted = createRemoteIdentity({ principalId: 'trusted', role: 'controller', instanceId: 'trusted-inc', issuedAt: now - 10, expiresAt: now + 10_000, keyId: 'key-1' });
+  const untrusted = createRemoteIdentity({ principalId: 'untrusted', role: 'controller', instanceId: 'untrusted-inc', issuedAt: now - 10, expiresAt: now + 10_000, keyId: 'key-1' });
+  const envelope = { requestId: 'trusted-req', method: 'execute', payload: {} };
+  const auth = new RemoteAuthenticationSession({ keyRing, clock: () => now, trustedIdentities: [trusted], requireTrustedIdentity: true });
+  const signed = createSignedEnvelope({ identity: untrusted, envelope, keyRing, nonce: 'untrusted-nonce' });
+  assert.equal(auth.authenticate({ identity: untrusted, envelope, signature: signed.signature, nonce: signed.nonce }).code, 'UNTRUSTED_IDENTITY');
+});
+
+test('bounds replay nonce memory', () => {
+  const now = 60_000;
+  const keyRing = new RemoteAuthKeyRing();
+  keyRing.addKey({ keyId: 'key-1', secret: SECRET, active: true });
+  const identity = createRemoteIdentity({ principalId: 'bounded', role: 'worker', instanceId: 'bounded-inc', issuedAt: now - 10, expiresAt: now + 10_000, keyId: 'key-1' });
+  const auth = new RemoteAuthenticationSession({ keyRing, clock: () => now, maxSeenNonces: 2 });
+  for (const nonce of ['n1', 'n2', 'n3']) {
+    const envelope = { requestId: nonce, method: 'heartbeat', payload: {} };
+    const signed = createSignedEnvelope({ identity, envelope, keyRing, nonce });
+    assert.equal(auth.authenticate({ identity, envelope, signature: signed.signature, nonce }).ok, true);
+  }
+});

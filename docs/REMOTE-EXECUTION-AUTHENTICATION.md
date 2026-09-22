@@ -38,7 +38,7 @@ The key ring supports:
 
 Secrets remain runtime configuration. They are not stored in protocol envelopes.
 
-Signed material is canonicalized before signing so semantically equivalent object key ordering cannot produce different signatures.
+Signed material is canonicalized before signing so semantically equivalent object key ordering cannot produce different signatures. The authentication object also carries the exact signed protocol envelope; the transport rejects any mismatch between that envelope and the request being executed.
 
 ## Authorization
 
@@ -55,7 +55,7 @@ The transport verifies role authorization after authentication and before execut
 
 Each authenticated request carries a nonce. A nonce can only be accepted once per authentication session.
 
-This is deliberately session-local in PR #93. Durable/distributed replay state belongs to the later idempotency layer.
+This is deliberately session-local in PR #93, with a bounded nonce cache to prevent unbounded memory growth. Durable/distributed replay state belongs to the later idempotency layer.
 
 ## Transport integration
 
@@ -67,7 +67,7 @@ When `authKeyRing` is supplied to `InMemoryRemoteExecutionTransport`:
 - authentication metadata is excluded from the signed protocol payload to avoid circular signatures;
 - tampering with the execution payload invalidates the signature.
 
-Without `authKeyRing`, the existing protocol-only development mode remains available.
+Controller identities can be explicitly allowlisted through the transport trust configuration. Worker identities may bootstrap through possession of a valid worker credential and are then bound to the authenticated session. Without `authKeyRing`, the existing protocol-only development mode remains available.
 
 ## Security boundary
 

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export const MISSION_STORE_SCHEMA_VERSION = '0.3.0';
@@ -105,8 +105,21 @@ export class FileMissionStore {
     const snapshot = [...this.records.values()];
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const temporaryPath = this.filePath + '.' + process.pid + '.tmp';
-    await writeFile(temporaryPath, JSON.stringify(snapshot, null, 2), 'utf8');
+    const payload = JSON.stringify(snapshot, null, 2);
+    const handle = await open(temporaryPath, 'w');
+    try {
+      await handle.writeFile(payload, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temporaryPath, this.filePath);
+    const directoryHandle = await open(path.dirname(this.filePath), 'r');
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
   }
 
   async #withFileLock(operation) {

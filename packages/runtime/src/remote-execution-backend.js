@@ -1,6 +1,6 @@
 import { RemoteExecutionRecovery } from './remote-execution-recovery.js';
 
-const SCHEMA_VERSION = '0.2.0';
+const SCHEMA_VERSION = '0.3.0';
 export const REMOTE_EXECUTION_BACKEND_SCHEMA_VERSION = SCHEMA_VERSION;
 
 export class RemoteExecutionBackend {
@@ -19,22 +19,29 @@ export class RemoteExecutionBackend {
   async execute({ executionId, input = {}, context = {}, capability } = {}) {
     if (typeof executionId !== 'string' || !executionId.trim()) return failed(executionId, 'INVALID_EXECUTION_ID', 'Remote execution requires an execution id');
 
+    const execution = capability?.execution;
+    const command = execution?.command ?? null;
+    const args = execution?.args ?? [];
+    if (command !== null && (typeof command !== 'string' || !command.trim())) {
+      return failed(executionId, 'INVALID_COMMAND', 'Remote execution command must be a non-empty string');
+    }
+    if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) {
+      return failed(executionId, 'INVALID_ARGUMENTS', 'Remote execution args must be an array of strings');
+    }
+
+    let timeoutMs;
+    try { timeoutMs = minTimeout(context.timeoutMs, execution?.timeoutMs); }
+    catch (error) { return failed(executionId, error.code ?? 'INVALID_TIMEOUT', errorMessage(error)); }
+
     const request = {
       schemaVersion: SCHEMA_VERSION,
       executionId,
-      command: input.command ?? capability?.execution?.command ?? null,
-      args: input.args ?? capability?.execution?.args ?? [],
+      command,
+      args: [...args],
       input: structuredClone(input),
       capability: capability ? structuredClone(capability) : null,
-      timeoutMs: context.timeoutMs ?? null,
+      timeoutMs: timeoutMs ?? null,
     };
-
-    if (request.command !== null && (typeof request.command !== 'string' || !request.command)) {
-      return failed(executionId, 'INVALID_COMMAND', 'Remote execution command must be a non-empty string');
-    }
-    if (!Array.isArray(request.args) || request.args.some((arg) => typeof arg !== 'string')) {
-      return failed(executionId, 'INVALID_ARGUMENTS', 'Remote execution args must be an array of strings');
-    }
 
     if (this.recovery) {
       try {
@@ -43,8 +50,8 @@ export class RemoteExecutionBackend {
         const result = await this.recovery.execute({
           executionId,
           capabilityId,
-          input: { ...structuredClone(input), command: request.command, args: request.args },
-          context,
+          input: structuredClone(input),
+          context: { ...context, timeoutMs },
           capability: request.capability,
         });
 
@@ -77,7 +84,7 @@ export class RemoteExecutionBackend {
     }
 
     try {
-      const result = await this.transport.execute(request, { signal: context.signal, timeoutMs: context.timeoutMs });
+      const result = await this.transport.execute(request, { signal: context.signal, timeoutMs });
       return normalizeResult(executionId, this.backendId, result);
     } catch (error) {
       if (context.signal?.aborted) {
@@ -119,6 +126,14 @@ function normalizeResult(executionId, backend, result) {
     ...(result.fencingToken ? { fencingToken: result.fencingToken } : {}),
     ...(result.attempt !== undefined ? { attempt: result.attempt } : {}),
   };
+}
+
+function minTimeout(parent, declared) {
+  if (parent === undefined || parent === null) return declared;
+  if (!Number.isFinite(parent) || parent < 1) throw Object.assign(new Error('timeoutMs must be a positive finite number'), { code: 'INVALID_TIMEOUT', retryable: false });
+  if (declared === undefined || declared === null) return parent;
+  if (!Number.isFinite(declared) || declared < 1) throw Object.assign(new Error('execution.timeoutMs must be a positive finite number'), { code: 'INVALID_TIMEOUT', retryable: false });
+  return Math.min(parent, declared);
 }
 
 function failed(executionId, code, message) {

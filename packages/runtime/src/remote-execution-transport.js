@@ -1,5 +1,6 @@
 import { createProtocolEnvelope, validateProtocolEnvelope, RemoteProtocolSession, REMOTE_EXECUTION_PROTOCOL_VERSION } from './remote-execution-protocol.js';
 import { RemoteAuthenticationSession } from './remote-execution-auth.js';
+import { validateCapabilityAttestation } from './remote-capability-attestation.js';
 
 const SCHEMA_VERSION = '0.4.0';
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
@@ -17,8 +18,10 @@ export class InMemoryRemoteExecutionTransport {
   #protocolSessions = new Map();
   #supportedProtocolVersions;
   #authSession;
+  #authKeyRing;
+  #requireCapabilityAttestation;
 
-  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null, supportedProtocolVersions = [REMOTE_EXECUTION_PROTOCOL_VERSION], authKeyRing = null, authMaxClockSkewMs = undefined, authTrustedIdentities = [] } = {}) {
+  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null, supportedProtocolVersions = [REMOTE_EXECUTION_PROTOCOL_VERSION], authKeyRing = null, authMaxClockSkewMs = undefined, authTrustedIdentities = [], requireCapabilityAttestation = Boolean(authKeyRing) } = {}) {
     if (!Number.isFinite(leaseTtlMs) || leaseTtlMs <= 0) throw new TypeError('leaseTtlMs must be positive');
     if (workerRegistry && typeof workerRegistry.resolveCapability !== 'function') throw new TypeError('workerRegistry must expose resolveCapability()');
     if (leaseManager && (typeof leaseManager.acquire !== 'function' || typeof leaseManager.validate !== 'function')) throw new TypeError('leaseManager must expose acquire() and validate()');
@@ -27,11 +30,14 @@ export class InMemoryRemoteExecutionTransport {
     this.#registry = workerRegistry;
     if (!Array.isArray(supportedProtocolVersions) || supportedProtocolVersions.length === 0) throw new TypeError('supportedProtocolVersions must be non-empty');
     this.#leaseManager = leaseManager;
+    if (typeof requireCapabilityAttestation !== 'boolean') throw new TypeError('requireCapabilityAttestation must be boolean');
+    this.#requireCapabilityAttestation = requireCapabilityAttestation;
+    this.#authKeyRing = authKeyRing;
     this.#supportedProtocolVersions = [...new Set(supportedProtocolVersions)];
     this.#authSession = authKeyRing ? new RemoteAuthenticationSession({ keyRing: authKeyRing, clock: this.#clock, trustedIdentities: authTrustedIdentities, requireTrustedIdentity: true, ...(authMaxClockSkewMs !== undefined ? { maxClockSkewMs: authMaxClockSkewMs } : {}) }) : null;
   }
 
-  registerWorker({ workerId, execute, capabilities = [], protocolVersions = this.#supportedProtocolVersions, identity = null, authentication = null } = {}) {
+  registerWorker({ workerId, execute, capabilities = [], protocolVersions = this.#supportedProtocolVersions, identity = null, authentication = null, capabilityAttestation = null } = {}) {
     if (typeof workerId !== 'string' || !workerId.trim()) throw new TypeError('workerId must be a non-empty string');
     if (typeof execute !== 'function') throw new TypeError('worker execute handler is required');
     if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== 'string' || !value.trim())) throw new TypeError('capabilities must be an array of non-empty strings');
@@ -41,6 +47,7 @@ export class InMemoryRemoteExecutionTransport {
     if (negotiation.state !== 'negotiated') throw Object.assign(new Error('No compatible remote protocol version'), { code: negotiation.code });
     if (this.#authSession) {
       this.#authenticateWorkerRegistration({ workerId, identity, authentication, protocolVersion: negotiation.protocolVersion, capabilities });
+      this.#validateWorkerAttestation({ identity, capabilityAttestation, capabilities, protocolVersions, negotiatedProtocolVersion: negotiation.protocolVersion });
       this.#authSession.registerIdentity(identity);
     }
     if (this.#registry) {
@@ -52,13 +59,16 @@ export class InMemoryRemoteExecutionTransport {
       workerId,
       execute,
       capabilities: [...new Set(capabilities)].sort(),
+      protocolVersions: [...protocolVersions].sort(),
+      identity: identity ? structuredClone(identity) : null,
+      capabilityAttestation: capabilityAttestation ? structuredClone(capabilityAttestation) : null,
       registeredAt: this.#clock(),
       lastHeartbeatAt: this.#clock(),
     });
     return this.#workerSnapshot(this.#workers.get(workerId));
   }
 
-  heartbeat(workerId, { capabilities, identity = null, authentication = null, requestId = `heartbeat-${workerId}-${this.#clock()}` } = {}) {
+  heartbeat(workerId, { capabilities, identity = null, authentication = null, capabilityAttestation = null, requestId = `heartbeat-${workerId}-${this.#clock()}` } = {}) {
     const worker = this.#workers.get(workerId);
     if (!worker) throw Object.assign(new Error(`Worker not found: ${workerId}`), { code: 'WORKER_NOT_FOUND' });
     if (this.#authSession) {
@@ -75,10 +85,16 @@ export class InMemoryRemoteExecutionTransport {
       if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
     }
     worker.lastHeartbeatAt = this.#clock();
+    if (this.#authSession && this.#requireCapabilityAttestation) {
+      const nextCapabilities = capabilities === undefined ? worker.capabilities : capabilities;
+      this.#validateWorkerAttestation({ identity, capabilityAttestation, capabilities: nextCapabilities, protocolVersions: worker.protocolVersions, negotiatedProtocolVersion: this.#protocolSessions.get(workerId)?.negotiatedVersion });
+    }
     if (capabilities !== undefined) {
       if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== 'string' || !value.trim())) throw new TypeError('capabilities must be an array of non-empty strings');
       worker.capabilities = [...new Set(capabilities)].sort();
     }
+    if (this.#authSession && capabilityAttestation) worker.capabilityAttestation = structuredClone(capabilityAttestation);
+    if (identity) worker.identity = structuredClone(identity);
     this.#registry?.heartbeat(workerId, { capabilities });
     return this.#workerSnapshot(worker);
   }
@@ -110,6 +126,7 @@ export class InMemoryRemoteExecutionTransport {
     const worker = this.#resolveWorker(request, workerId);
     if (!worker) throw Object.assign(new Error('No healthy remote worker available'), { code: 'NO_HEALTHY_WORKER', retryable: true });
 
+    if (this.#authSession && this.#requireCapabilityAttestation) this.#validateWorkerAttestation({ identity: worker.identity, capabilityAttestation: worker.capabilityAttestation, capabilities: worker.capabilities, protocolVersions: worker.protocolVersions, negotiatedProtocolVersion: this.#protocolSessions.get(worker.workerId)?.negotiatedVersion });
     const session = this.#protocolSessions.get(worker.workerId);
     const envelope = createProtocolEnvelope({
       requestId: request.requestId ?? `req-${request.executionId}-${this.#nextId + 1}`,
@@ -203,6 +220,17 @@ export class InMemoryRemoteExecutionTransport {
     if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
     const authorization = this.#authSession.authorize({ identity, method: envelope.method });
     if (!authorization.ok) throw Object.assign(new Error(authorization.code), { code: authorization.code });
+  }
+
+  #validateWorkerAttestation({ identity, capabilityAttestation, capabilities, protocolVersions, negotiatedProtocolVersion }) {
+    if (!this.#requireCapabilityAttestation) return;
+    if (!identity || !capabilityAttestation) throw Object.assign(new Error('Worker capability attestation is required'), { code: 'ATTESTATION_REQUIRED' });
+    const result = validateCapabilityAttestation(capabilityAttestation, { identity, now: this.#clock(), supportedProtocolVersions: this.#supportedProtocolVersions, keyRing: this.#authKeyRing });
+    if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.code === 'ATTESTATION_EXPIRED' });
+    const expectedCapabilities = [...new Set(capabilities)].sort();
+    if (JSON.stringify(result.capabilities) !== JSON.stringify(expectedCapabilities)) throw Object.assign(new Error('Capability attestation does not match worker capability set'), { code: 'CAPABILITY_DRIFT' });
+    if (negotiatedProtocolVersion && !result.protocolVersions.includes(negotiatedProtocolVersion)) throw Object.assign(new Error('Capability attestation does not cover negotiated protocol'), { code: 'ATTESTATION_PROTOCOL_MISMATCH' });
+    return result;
   }
 
   #authenticateControllerRequest(authentication, envelope) {

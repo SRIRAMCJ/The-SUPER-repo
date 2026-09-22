@@ -161,3 +161,73 @@ test('transport fences active execution ownership when a worker is unregistered'
   await assert.rejects(() => pending, (error) => error.code === 'LEASE_NOT_ACTIVE');
   assert.equal(leases.get(remote.leaseId).status, 'fenced');
 });
+
+test('transport negotiates protocol and forwards protocol-safe request metadata', async () => {
+  const transport = new InMemoryRemoteExecutionTransport({ clock: () => 1000 });
+  let received;
+  transport.registerWorker({
+    workerId: 'protocol-worker',
+    protocolVersions: ['1.0'],
+    execute: async (request) => {
+      received = request;
+      return { status: 'succeeded', output: { ok: true } };
+    },
+  });
+  const result = await transport.execute({
+    executionId: 'exec-protocol',
+    requestId: 'req-protocol-1',
+    traceId: 'trace-1',
+    deadlineAt: 2000,
+  });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(received.requestId, 'req-protocol-1');
+  assert.equal(received.traceId, 'trace-1');
+});
+
+test('transport rejects duplicate protocol request ids before worker execution', async () => {
+  const transport = new InMemoryRemoteExecutionTransport({ clock: () => 1000 });
+  let calls = 0;
+  transport.registerWorker({
+    workerId: 'protocol-worker',
+    execute: async () => {
+      calls += 1;
+      return { status: 'succeeded' };
+    },
+  });
+  await transport.execute({ executionId: 'exec-protocol-1', requestId: 'same-request' });
+  await assert.rejects(
+    () => transport.execute({ executionId: 'exec-protocol-2', requestId: 'same-request' }),
+    (error) => error.code === 'DUPLICATE_REQUEST',
+  );
+  assert.equal(calls, 1);
+});
+
+test('transport rejects incompatible worker protocol versions', () => {
+  const transport = new InMemoryRemoteExecutionTransport({ supportedProtocolVersions: ['1.0'] });
+  assert.throws(
+    () => transport.registerWorker({
+      workerId: 'legacy-worker',
+      protocolVersions: ['2.0'],
+      execute: async () => ({ status: 'succeeded' }),
+    }),
+    (error) => error.code === 'UNSUPPORTED_PROTOCOL_VERSION',
+  );
+});
+
+
+test('transport assigns unique implicit request ids across repeated execution attempts', async () => {
+  const transport = new InMemoryRemoteExecutionTransport({ clock: () => 1000 });
+  let calls = 0;
+  transport.registerWorker({
+    workerId: 'request-id-worker',
+    execute: async () => {
+      calls += 1;
+      return { status: 'succeeded' };
+    },
+  });
+
+  await transport.execute({ executionId: 'same-execution' });
+  await transport.execute({ executionId: 'same-execution' });
+
+  assert.equal(calls, 2);
+});

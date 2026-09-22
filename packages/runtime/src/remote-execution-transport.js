@@ -1,4 +1,6 @@
-const SCHEMA_VERSION = '0.2.0';
+import { createProtocolEnvelope, RemoteProtocolSession, REMOTE_EXECUTION_PROTOCOL_VERSION } from './remote-execution-protocol.js';
+
+const SCHEMA_VERSION = '0.3.0';
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
 
 export const REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION = SCHEMA_VERSION;
@@ -9,20 +11,25 @@ export class InMemoryRemoteExecutionTransport {
   #clock;
   #leaseTtlMs;
   #nextId = 0;
+  #nextRequestId = 0;
   #registry;
   #leaseManager;
+  #protocolSessions = new Map();
+  #supportedProtocolVersions;
 
-  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null } = {}) {
+  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null, supportedProtocolVersions = [REMOTE_EXECUTION_PROTOCOL_VERSION] } = {}) {
     if (!Number.isFinite(leaseTtlMs) || leaseTtlMs <= 0) throw new TypeError('leaseTtlMs must be positive');
     if (workerRegistry && typeof workerRegistry.resolveCapability !== 'function') throw new TypeError('workerRegistry must expose resolveCapability()');
     if (leaseManager && (typeof leaseManager.acquire !== 'function' || typeof leaseManager.validate !== 'function')) throw new TypeError('leaseManager must expose acquire() and validate()');
     this.#clock = clock;
     this.#leaseTtlMs = leaseTtlMs;
     this.#registry = workerRegistry;
+    if (!Array.isArray(supportedProtocolVersions) || supportedProtocolVersions.length === 0) throw new TypeError('supportedProtocolVersions must be non-empty');
     this.#leaseManager = leaseManager;
+    this.#supportedProtocolVersions = [...new Set(supportedProtocolVersions)];
   }
 
-  registerWorker({ workerId, execute, capabilities = [] } = {}) {
+  registerWorker({ workerId, execute, capabilities = [], protocolVersions = this.#supportedProtocolVersions } = {}) {
     if (typeof workerId !== 'string' || !workerId.trim()) throw new TypeError('workerId must be a non-empty string');
     if (typeof execute !== 'function') throw new TypeError('worker execute handler is required');
     if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== 'string' || !value.trim())) throw new TypeError('capabilities must be an array of non-empty strings');
@@ -31,6 +38,10 @@ export class InMemoryRemoteExecutionTransport {
       const registration = this.#registry.register({ workerId, capabilities });
       if (registration.state === 'conflict') throw Object.assign(new Error(`Worker already registered: ${workerId}`), { code: 'WORKER_ALREADY_REGISTERED' });
     }
+    const session = new RemoteProtocolSession({ supportedVersions: this.#supportedProtocolVersions, clock: this.#clock });
+    const negotiation = session.negotiate(protocolVersions);
+    if (negotiation.state !== 'negotiated') throw Object.assign(new Error('No compatible remote protocol version'), { code: negotiation.code });
+    this.#protocolSessions.set(workerId, session);
     this.#workers.set(workerId, {
       workerId,
       execute,
@@ -55,6 +66,7 @@ export class InMemoryRemoteExecutionTransport {
 
   unregisterWorker(workerId) {
     this.#workers.delete(workerId);
+    this.#protocolSessions.delete(workerId);
     this.#registry?.remove(workerId);
     const now = this.#clock();
     for (const [id, lease] of this.#leases) {
@@ -79,6 +91,18 @@ export class InMemoryRemoteExecutionTransport {
     const worker = this.#resolveWorker(request, workerId);
     if (!worker) throw Object.assign(new Error('No healthy remote worker available'), { code: 'NO_HEALTHY_WORKER', retryable: true });
 
+    const session = this.#protocolSessions.get(worker.workerId);
+    const envelope = createProtocolEnvelope({
+      requestId: request.requestId ?? `req-${request.executionId}-${++this.#nextRequestId}`,
+      method: 'execute',
+      executionId: request.executionId,
+      payload: request,
+      timestamp: this.#clock(),
+      deadlineAt: request.deadlineAt ?? null,
+      traceId: request.traceId ?? null,
+    });
+    const protocolAcceptance = session?.accept(envelope);
+    if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
     const ownership = this.#ensureLease(request.executionId, worker.workerId, leaseId, fencingToken);
     if (!ownership.ok) throw Object.assign(new Error(ownership.error.message), { code: ownership.error.code, retryable: true });
 
@@ -103,7 +127,7 @@ export class InMemoryRemoteExecutionTransport {
       };
       signal?.addEventListener('abort', abortHandler, { once: true });
 
-      const result = await worker.execute(structuredClone(request), {
+      const result = await worker.execute(structuredClone(envelope.payload), {
         signal,
         workerId: worker.workerId,
         leaseId: lease.leaseId,

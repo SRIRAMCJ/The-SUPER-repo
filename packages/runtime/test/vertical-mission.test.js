@@ -84,3 +84,27 @@ test('terminal missions cannot be resumed', async () => {
   assert.equal(recovered.status, 'succeeded');
   assert.equal(recovered.recovery.resumable, false);
 });
+
+test('durable recovery leases fence concurrent recovery claims', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'super-vertical-fence-'));
+  const missionPath = path.join(directory, 'missions.json');
+  const storeA = await new FileMissionStore(missionPath).init();
+  const storeB = await new FileMissionStore(missionPath).init();
+  const record = await storeA.save({
+    type: 'vertical-mission',
+    missionId: 'mission/fenced',
+    missionExecutionId: 'exec/fenced',
+    status: 'executing',
+    plan: { type: 'task-plan', schemaVersion: '0.1.0', taskCount: 1, tasks: [{ id: 'build', dependsOn: [] }], order: ['build'] }
+  });
+  const claimed = await storeA.claimRecovery(record.missionExecutionId, 'worker-a', 30000);
+  assert.equal(claimed.recoveryLease.owner, 'worker-a');
+  await assert.rejects(
+    () => storeB.claimRecovery(record.missionExecutionId, 'worker-b', 30000),
+    (error) => error.code === 'MISSION_RECOVERY_LEASE_HELD'
+  );
+  const released = await storeA.releaseRecovery(record.missionExecutionId, 'worker-a');
+  assert.equal(released.recoveryLease, null);
+  const reclaimed = await storeB.claimRecovery(record.missionExecutionId, 'worker-b', 30000);
+  assert.equal(reclaimed.recoveryLease.owner, 'worker-b');
+});

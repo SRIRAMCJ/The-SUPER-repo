@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'rolled_back']);
@@ -86,12 +86,7 @@ export class FileExecutionStateStore extends ExecutionStateStore {
         await handle.close();
       }
       await rename(temporaryPath, this.filePath);
-      const directoryHandle = await open(path.dirname(this.filePath), 'r');
-      try {
-        await directoryHandle.sync();
-      } finally {
-        await directoryHandle.close();
-      }
+      await syncDirectory(path.dirname(this.filePath));
     });
     return this.writeQueue;
   }
@@ -148,4 +143,14 @@ function freezeState(state) {
 
 function clone(value) {
   return structuredClone(value);
+}
+
+
+async function syncDirectory(directory) {
+  try {
+    const handle = await open(directory, 'r');
+    try { await handle.sync(); } finally { await handle.close(); }
+  } catch (error) {
+    if (!['EINVAL', 'ENOTSUP', 'EPERM'].includes(error?.code)) throw error;
+  }
 }

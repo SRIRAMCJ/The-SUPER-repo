@@ -80,3 +80,5 @@ export { RemoteRecoveryCoordinator, REMOTE_RECOVERY_COORDINATOR_SCHEMA_VERSION }
 export { RemoteAuthKeyRing, RemoteAuthenticationSession, createRemoteIdentity, createSignedEnvelope, signRemoteEnvelope, verifyRemoteEnvelope, validateIdentity, canonicalize, REMOTE_EXECUTION_AUTH_SCHEMA_VERSION, REMOTE_EXECUTION_AUTH_VERSION } from './remote-execution-auth.js';
 
 export { CAPABILITY_ATTESTATION_SCHEMA_VERSION, CAPABILITY_ATTESTATION_ALGORITHM, canonicalizeCapabilities, canonicalizeProtocolVersions, capabilityFingerprint, createCapabilityAttestation, signCapabilityAttestation, verifyCapabilityAttestation, validateCapabilityAttestation } from './remote-capability-attestation.js';
+
+export { DurableExecutionStateMachine, DURABLE_EXECUTION_STATE_MACHINE_SCHEMA_VERSION, EXECUTION_LIFECYCLE_STATES, isValidExecutionTransition, allowedExecutionTransitions } from './durable-execution-state-machine.js';

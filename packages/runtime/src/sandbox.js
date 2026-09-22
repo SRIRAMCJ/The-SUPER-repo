@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-export const SANDBOX_SCHEMA_VERSION = '0.1.0';
+export const SANDBOX_SCHEMA_VERSION = '0.2.0';
 export const SANDBOX_TERMINAL_STATES = Object.freeze(['succeeded', 'failed', 'cancelled', 'timed_out']);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
+const DEFAULT_MAX_INPUT_BYTES = 65_536;
 const DEFAULT_MAX_RECORDS = 500;
 const SAFE_ENV = new Set(['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL']);
 
@@ -18,16 +19,19 @@ export class ExecutionSandbox {
     maxRecords = DEFAULT_MAX_RECORDS,
     defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
     defaultMaxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
+    defaultMaxInputBytes = DEFAULT_MAX_INPUT_BYTES,
   } = {}) {
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
     if (!Number.isFinite(defaultTimeoutMs) || defaultTimeoutMs < 1) throw new TypeError('defaultTimeoutMs must be positive');
     if (!Number.isInteger(defaultMaxOutputBytes) || defaultMaxOutputBytes < 1) throw new TypeError('defaultMaxOutputBytes must be positive');
+    if (!Number.isInteger(defaultMaxInputBytes) || defaultMaxInputBytes < 1) throw new TypeError('defaultMaxInputBytes must be positive');
     this.clock = clock;
     this.idFactory = idFactory;
     this.maxRecords = maxRecords;
     this.defaultTimeoutMs = defaultTimeoutMs;
     this.defaultMaxOutputBytes = defaultMaxOutputBytes;
+    this.defaultMaxInputBytes = defaultMaxInputBytes;
   }
 
   async execute(command, args = [], options = {}) {
@@ -40,9 +44,11 @@ export class ExecutionSandbox {
       validatePolicy(policy, options);
       const timeoutMs = normalizePositive(options.timeoutMs ?? this.defaultTimeoutMs, 'timeoutMs');
       const maxOutputBytes = normalizePositiveInteger(options.maxOutputBytes ?? this.defaultMaxOutputBytes, 'maxOutputBytes');
+      const maxInputBytes = normalizePositiveInteger(options.maxInputBytes ?? this.defaultMaxInputBytes, 'maxInputBytes');
+      const stdin = normalizeStdin(options.stdin, maxInputBytes);
       const cwd = validateCwd(options.cwd);
       const env = buildEnvironment(options.env, policy);
-      return await this.#spawn({ executionId, command, args, cwd, env, policy, timeoutMs, maxOutputBytes, signal: options.signal });
+      return await this.#spawn({ executionId, command, args, cwd, env, policy, timeoutMs, maxOutputBytes, stdin, signal: options.signal });
     } catch (error) {
       return this.#record(failure(executionId, error.code ?? 'SANDBOX_INVALID', error instanceof Error ? error.message : String(error), this.clock));
     }
@@ -58,15 +64,20 @@ export class ExecutionSandbox {
     return [...this.#records.values()].slice(-limit).map((item) => structuredClone(item));
   }
 
-  async #spawn({ executionId, command, args, cwd, env, policy, timeoutMs, maxOutputBytes, signal }) {
+  async #spawn({ executionId, command, args, cwd, env, policy, timeoutMs, maxOutputBytes, stdin, signal }) {
     const startedAt = this.clock().toISOString();
     const child = spawn(command, args, {
       cwd,
       env,
       shell: false,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
+
+    if (child.stdin) {
+      child.stdin.on('error', () => {});
+      if (stdin !== null) child.stdin.end(stdin);
+    }
 
     let stdoutChunks = [];
     let stderrChunks = [];
@@ -101,10 +112,7 @@ export class ExecutionSandbox {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (outputBytes + buffer.length > maxOutputBytes) {
         const remaining = Math.max(0, maxOutputBytes - outputBytes);
-        if (remaining) {
-          const partial = buffer.subarray(0, remaining);
-          (target === 'stdout' ? stdoutChunks : stderrChunks).push(partial);
-        }
+        if (remaining) (target === 'stdout' ? stdoutChunks : stderrChunks).push(buffer.subarray(0, remaining));
         outputBytes = maxOutputBytes;
         outputLimit = true;
         terminate(new Error('Sandbox output limit exceeded'), 'OUTPUT_LIMIT');
@@ -137,6 +145,7 @@ export class ExecutionSandbox {
           error: { code: 'SPAWN_FAILED', message: error.message },
         }));
       });
+
       child.once('close', (exitCode, signalName) => {
         closed = true;
         if (timer) clearTimeout(timer);
@@ -148,12 +157,12 @@ export class ExecutionSandbox {
         const error = status === 'succeeded' ? null : {
           code: outputLimit ? 'OUTPUT_LIMIT' : status === 'cancelled' ? 'CANCELLED' : status === 'timed_out' ? 'TIMED_OUT' : 'PROCESS_EXIT',
           message: outputLimit
-  ? 'Sandbox output limit exceeded'
-  : status === 'cancelled'
-    ? 'Sandbox execution cancelled'
-    : status === 'timed_out'
-      ? 'Sandbox execution timed out'
-      : `Sandbox process exited with code ${exitCode}${signalName ? ` (${signalName})` : ''}`,
+            ? 'Sandbox output limit exceeded'
+            : status === 'cancelled'
+              ? 'Sandbox execution cancelled'
+              : status === 'timed_out'
+                ? 'Sandbox execution timed out'
+                : `Sandbox process exited with code ${exitCode}${signalName ? ` (${signalName})` : ''}`,
         };
         resolve(this.#record({
           schemaVersion: SANDBOX_SCHEMA_VERSION,
@@ -209,9 +218,19 @@ function validateCwd(cwd) {
   return cwd;
 }
 
+function normalizeStdin(value, maxInputBytes) {
+  if (value === undefined || value === null) return null;
+  const buffer = Buffer.isBuffer(value) ? Buffer.from(value) : typeof value === 'string' ? Buffer.from(value, 'utf8') : null;
+  if (!buffer) throw codeError('INVALID_STDIN', 'stdin must be a string or Buffer');
+  if (buffer.length > maxInputBytes) throw codeError('INPUT_LIMIT', 'Sandbox stdin exceeds the configured input limit');
+  return buffer;
+}
+
 function buildEnvironment(overrides, policy) {
   if (overrides !== undefined && (!overrides || typeof overrides !== 'object' || Array.isArray(overrides))) throw new TypeError('env must be an object');
-  const base = policy.environment === 'inherit' ? { ...process.env } : Object.fromEntries([...SAFE_ENV].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
+  const base = policy.environment === 'inherit'
+    ? { ...process.env }
+    : Object.fromEntries([...SAFE_ENV].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
   for (const [key, value] of Object.entries(overrides ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw codeError('INVALID_ENVIRONMENT_KEY', `Invalid environment key: ${key}`);
     if (typeof value !== 'string') throw codeError('INVALID_ENVIRONMENT_VALUE', `Environment value must be a string: ${key}`);

@@ -14,6 +14,20 @@ test('ExecutionSandbox', async (t) => {
     );
   });
 
+  await t.test('passes bounded UTF-8 stdin to the child process', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-stdin' });
+    const result = await sandbox.execute(node, ['-e', 'let data=""; process.stdin.on("data", c => data += c); process.stdin.on("end", () => process.stdout.write(data))'], { stdin: 'தமிழ் 🚀' });
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.stdout, 'தமிழ் 🚀');
+  });
+
+  await t.test('fails closed when sandbox stdin exceeds the configured limit', async () => {
+    const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-input-limit' });
+    const result = await sandbox.execute(node, ['-e', 'process.exit(0)'], { stdin: '123456', maxInputBytes: 5 });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error.code, 'INPUT_LIMIT');
+  });
+
   await t.test('uses a safe environment by default and accepts explicit values', async () => {
     const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-2' });
     const result = await sandbox.execute(node, ['-e', 'process.stdout.write(process.env.SUPER_TEST ?? "missing")'], { env: { SUPER_TEST: 'ok' } });

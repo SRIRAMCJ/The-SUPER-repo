@@ -90,7 +90,7 @@ export class VerticalMissionEngine {
       execution = { status: 'failed', error: normalizeError(error), executionId: record.missionExecutionId, resumed: true };
     }
     if (execution.status !== 'succeeded') {
-      if (execution.error?.retryable) {
+      if (isRetryableExecution(execution)) {
         const retryable = await this.missionStore.save({ ...current, status: 'executing', result: structuredClone(execution), recovery: { status: 'available', resumable: true, reason: 'Recovered execution failed transiently; retry recovery after the underlying task state is safe.' } }, current.version);
         this.#emit('mission.recovery.available', retryable);
         return retryable;
@@ -103,7 +103,10 @@ export class VerticalMissionEngine {
       ? await this.verifier.verify({ capability: { id: record.missionId, kind: 'mission' }, input: record.input, output: execution, context: { ...record.context, missionExecutionId: record.missionExecutionId, recovered: true } })
       : { verified: true, checks: 0, failures: [] };
     if (!verification.verified) return this.#finish(verifying, 'rejected', execution, verification, [], { recovered: true });
-    return this.#finish(verifying, 'succeeded', execution, verification, [], { recovered: true });
+    const artifacts = this.artifactStore
+      ? await this.artifactStore.save({ mission: { id: record.missionId, kind: 'mission' }, input: record.input, output: execution, missionExecutionId: record.missionExecutionId, recovered: true })
+      : [];
+    return this.#finish(verifying, 'succeeded', execution, verification, artifacts, { recovered: true });
   }
 
   async get(missionExecutionId) { return this.missionStore.get(missionExecutionId); }
@@ -139,12 +142,23 @@ function validateMission(mission) {
   if (typeof mission.id !== 'string' || !mission.id) throw new TypeError('Mission requires id');
   if (!Array.isArray(mission.tasks) || mission.tasks.length === 0) throw new TypeError('Vertical mission requires explicit tasks');
 }
+
 function sanitizeContext(context) {
   const value = structuredClone(context);
   delete value.signal;
   delete value.abortSignal;
   return value;
 }
-function isRetryableExecution(execution) {\n  if (execution?.error?.retryable) return true;\n  return Array.isArray(execution?.results) && execution.results.some((result) => result?.error?.retryable === true);\n}\n\nfunction normalizeError(error) {
-  return { code: error?.code ?? 'MISSION_ERROR', message: error instanceof Error ? error.message : String(error), retryable: Boolean(error?.retryable) };
+
+function isRetryableExecution(execution) {
+  if (execution?.error?.retryable) return true;
+  return Array.isArray(execution?.results) && execution.results.some((result) => result?.error?.retryable === true);
+}
+
+function normalizeError(error) {
+  return {
+    code: error?.code ?? 'MISSION_ERROR',
+    message: error instanceof Error ? error.message : String(error),
+    retryable: Boolean(error?.retryable)
+  };
 }

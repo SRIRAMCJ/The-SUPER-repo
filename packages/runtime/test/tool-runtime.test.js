@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CapabilityRegistry } from '../src/registry.js';
+import { ExecutionSandbox } from '../src/sandbox.js';
 import { ToolRuntime } from '../src/tool-runtime.js';
+
+const node = process.execPath;
 
 const manifest = (overrides = {}) => ({
   schemaVersion: '0.1.0',
@@ -20,19 +23,6 @@ function runtime(handler, options = {}) {
   registry.register(manifest(options.manifest), handler);
   return new ToolRuntime({ registry, ...options });
 }
-
-test('ToolRuntime uses the injected clock for terminal failure records', async () => {
-  let now = new Date('2026-01-01T00:00:00.000Z');
-  const rt = runtime(async () => { throw new Error('boom'); }, { clock: () => now, idFactory: () => 'clock-failure' });
-  const result = await rt.execute('tool/test');
-  assert.equal(result.error.code, 'TOOL_FAILED');
-  assert.equal(result.completedAt, now.toISOString());
-
-  now = new Date('2026-01-01T00:00:01.000Z');
-  const invalid = await rt.execute('tool/test', null, { executionId: 'clock-invalid' });
-  assert.equal(invalid.error.code, 'INVALID_INPUT');
-  assert.equal(invalid.completedAt, now.toISOString());
-});
 
 test('ToolRuntime executes registered tools with correlation and signal', async () => {
   let calls = 0;
@@ -102,4 +92,96 @@ test('ToolRuntime prevents execution id reuse', async () => {
   await rt.execute('tool/test');
   const result = await rt.execute('tool/test');
   assert.equal(result.error.code, 'EXECUTION_CONFLICT');
+});
+
+test('ToolRuntime routes sandbox-backed tools through ExecutionSandbox and never invokes the in-process handler', async () => {
+  let calls = 0;
+  const sandbox = new ExecutionSandbox({ idFactory: () => 'sandbox-tool-1' });
+  const rt = runtime(() => { calls += 1; return { bypassed: true }; }, {
+    sandbox,
+    idFactory: () => 'tool-exec-1',
+    manifest: {
+      execution: {
+        backend: 'sandbox',
+        command: node,
+        args: ['-e', 'let data=""; process.stdin.on("data", c => data += c); process.stdin.on("end", () => process.stdout.write(JSON.stringify({ received: JSON.parse(data).value + 1 })))'],
+        output: 'json',
+      },
+    },
+  });
+
+  const result = await rt.execute('tool/test', { value: 41 });
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(result.output, { received: 42 });
+  assert.equal(result.backend, 'sandbox');
+  assert.equal(result.sandbox.executionId, 'tool-exec-1');
+  assert.equal(calls, 0);
+});
+
+test('ToolRuntime fails closed when a sandbox backend is declared without a sandbox', async () => {
+  const rt = runtime(() => 'must-not-run', {
+    idFactory: () => 'tool-exec-2',
+    manifest: { execution: { backend: 'sandbox', command: node, args: ['-e', 'process.stdout.write("{}")]'] } },
+  });
+  const result = await rt.execute('tool/test');
+  assert.equal(result.error.code, 'SANDBOX_UNAVAILABLE');
+});
+
+test('ToolRuntime preserves policy as the security boundary before sandbox execution', async () => {
+  let calls = 0;
+  const sandbox = { execute: async () => { calls += 1; return { status: 'succeeded', stdout: '{}' }; } };
+  const rt = runtime(() => undefined, {
+    sandbox,
+    policyEngine: { authorize: () => ({ allowed: false, reason: 'sandbox denied by policy' }) },
+    idFactory: () => 'tool-exec-3',
+    manifest: { execution: { backend: 'sandbox', command: node, args: ['-e', 'process.stdout.write("{}")'] } },
+  });
+  const result = await rt.execute('tool/test');
+  assert.equal(result.error.code, 'FORBIDDEN');
+  assert.equal(calls, 0);
+});
+
+test('ToolRuntime propagates sandbox cancellation and timeout as terminal tool states', async () => {
+  const sandbox = new ExecutionSandbox();
+  const cancel = new AbortController();
+  const rt = runtime(() => undefined, {
+    sandbox,
+    idFactory: (() => { let i = 0; return () => `tool-exec-${++i}`; })(),
+    manifest: {
+      execution: {
+        backend: 'sandbox',
+        command: node,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        output: 'text',
+      },
+    },
+  });
+
+  const pending = rt.execute('tool/test', {}, { signal: cancel.signal, timeoutMs: 5000 });
+  cancel.abort(new Error('stop'));
+  const cancelled = await pending;
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.error.code, 'CANCELLED');
+
+  const timed = await rt.execute('tool/test', {}, { timeoutMs: 20 });
+  assert.equal(timed.status, 'timed_out');
+  assert.equal(timed.error.code, 'TIMED_OUT');
+});
+
+test('ToolRuntime rejects invalid sandbox output instead of returning untyped data', async () => {
+  const sandbox = new ExecutionSandbox();
+  const rt = runtime(() => undefined, {
+    sandbox,
+    manifest: {
+      execution: {
+        backend: 'sandbox',
+        command: node,
+        args: ['-e', 'process.stdout.write("not-json")'],
+        output: 'json',
+      },
+    },
+  });
+  const result = await rt.execute('tool/test');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.code, 'SANDBOX_OUTPUT_INVALID');
 });

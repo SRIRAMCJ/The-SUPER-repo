@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 export const MISSION_STORE_SCHEMA_VERSION = '0.3.0';
@@ -156,3 +156,13 @@ function recoveryLockConflict(filePath) {
   return Object.assign(new Error('Mission store lock unavailable: ' + filePath), { code: 'MISSION_STORE_LOCK_TIMEOUT', retryable: true });
 }
 function clone(value) { return value === null ? null : structuredClone(value); }
+
+
+async function syncDirectory(directory) {
+  try {
+    const handle = await open(directory, 'r');
+    try { await handle.sync(); } finally { await handle.close(); }
+  } catch (error) {
+    if (!['EINVAL', 'ENOTSUP', 'EPERM'].includes(error?.code)) throw error;
+  }
+}

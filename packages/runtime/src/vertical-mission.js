@@ -91,7 +91,14 @@ export class VerticalMissionEngine {
 
   #store(record) { this.missions.set(record.missionId, structuredClone(record)); }
   async #persist(record) { this.#store(record); if (this.missionStore) { const saved = await this.missionStore.save(record, record.version ?? null); record.version = saved.version; record.updatedAt = saved.updatedAt; this.#store(record); } }
-  async recover(missionId) { if (!this.missionStore) return this.getMission(missionId); const record = await this.missionStore.get(missionId); if (record) this.#store(record); return clone(record); }
+  async recover(missionId) {
+    if (!this.missionStore) return this.getMission(missionId);
+    const record = await this.missionStore.get(missionId);
+    if (!record) return null;
+    this.#store(record);
+    if (record.status === 'succeeded' || record.status === 'cancelled' || record.status === 'rejected') return clone(record);
+    return Object.freeze({ ...clone(record), recovery: { status: 'available', resumable: true, reason: 'Mission state is durable and non-terminal; resume requires the original execution dependencies.' } });
+  }
   #emit(event) { this.events?.emit({ schemaVersion: SCHEMA_VERSION, timestamp: this.clock().toISOString(), ...event }); }
 }
 

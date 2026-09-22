@@ -28,6 +28,8 @@ jobs:
         run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/sandbox.test.js packages/runtime/test/tool-runtime.test.js
       - name: Run remote durability regression tests
         run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/remote-durability.test.js
+      - name: Run remote authentication regression tests
+        run: node --test --test-concurrency=1 --test-timeout=10000 packages/runtime/test/remote-execution-auth.test.js packages/runtime/test/remote-execution-transport.test.js
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
       - name: Run CLI tests

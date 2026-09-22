@@ -31,3 +31,20 @@ test('session rejects duplicate requests', () => {
   assert.equal(session.accept(envelope).ok, true);
   assert.equal(session.accept(envelope).code, 'DUPLICATE_REQUEST');
 });
+
+
+test('protocol negotiation follows local supported-version preference', () => {
+  assert.equal(negotiateProtocol({ offered: ['1.0', '2.0'], supported: ['2.0', '1.0'] }).protocolVersion, '1.0');
+});
+
+test('protocol validation rejects malformed deadline, execution id, and payload', () => {
+  const base = createProtocolEnvelope({ requestId: 'validate-1', method: 'execute', payload: {} });
+  assert.equal(validateProtocolEnvelope({ ...base, deadlineAt: 'invalid' }).code, 'INVALID_DEADLINE');
+  assert.equal(validateProtocolEnvelope({ ...base, executionId: 42 }).code, 'INVALID_EXECUTION_ID');
+  assert.equal(validateProtocolEnvelope({ ...base, payload: [] }).code, 'INVALID_PAYLOAD');
+});
+
+test('protocol validation does not accept a non-finite deadline', () => {
+  const base = createProtocolEnvelope({ requestId: 'validate-2', method: 'execute', payload: {} });
+  assert.equal(validateProtocolEnvelope({ ...base, deadlineAt: Infinity }).code, 'INVALID_DEADLINE');
+});

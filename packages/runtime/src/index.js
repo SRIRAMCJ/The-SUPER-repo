@@ -76,3 +76,5 @@ export { RemoteWorkerFailoverController, REMOTE_WORKER_FAILOVER_SCHEMA_VERSION }
 export { InMemoryRemoteExecutionStore, FileRemoteExecutionStore, REMOTE_EXECUTION_STORE_SCHEMA_VERSION } from './remote-execution-store.js';
 export { RemoteWorkerIdentityRegistry, REMOTE_WORKER_IDENTITY_SCHEMA_VERSION } from './remote-worker-identity.js';
 export { RemoteRecoveryCoordinator, REMOTE_RECOVERY_COORDINATOR_SCHEMA_VERSION } from './remote-recovery-coordinator.js';
+
+export { RemoteAuthKeyRing, RemoteAuthenticationSession, createRemoteIdentity, createSignedEnvelope, signRemoteEnvelope, verifyRemoteEnvelope, validateIdentity, canonicalize, REMOTE_EXECUTION_AUTH_SCHEMA_VERSION, REMOTE_EXECUTION_AUTH_VERSION } from './remote-execution-auth.js';

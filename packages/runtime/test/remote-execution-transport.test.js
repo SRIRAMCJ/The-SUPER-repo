@@ -102,7 +102,7 @@ test('transport rejects stale fenced ownership before dispatch', async () => {
 
   await assert.rejects(
     () => transport.execute(
-      { executionId: 'exec-stale', capability: { id: 'runtime.execute' } },
+      { executionId: 'exec-stale', requestId: 'exec-stale-request-1', capability: { id: 'runtime.execute' } },
       { workerId: 'worker-a', leaseId: first.lease.leaseId, fencingToken: first.lease.fencingToken },
     ),
     (error) => error.code === 'LEASE_NOT_ACTIVE',
@@ -110,7 +110,7 @@ test('transport rejects stale fenced ownership before dispatch', async () => {
 
   await assert.rejects(
     () => transport.execute(
-      { executionId: 'exec-stale', capability: { id: 'runtime.execute' } },
+      { executionId: 'exec-stale', requestId: 'exec-stale-request-2', capability: { id: 'runtime.execute' } },
       { workerId: 'worker-a', leaseId: second.lease.leaseId, fencingToken: first.lease.fencingToken },
     ),
     (error) => error.code === 'STALE_FENCING_TOKEN',
@@ -266,7 +266,7 @@ test('transport fails closed on tampered authenticated execution requests', asyn
   const workerIdentity = createRemoteIdentity({ principalId: 'worker-tamper', role: 'worker', instanceId: 'worker-tamper-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const controllerIdentity = createRemoteIdentity({ principalId: 'controller-tamper', role: 'controller', instanceId: 'controller-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const transport = new InMemoryRemoteExecutionTransport({ clock: () => now, authKeyRing: keyRing });
-  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-tamper', method: 'heartbeat', payload: { workerId: 'worker-tamper', capabilities: [] }, timestamp: now });
+  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-worker-tamper', method: 'heartbeat', payload: { workerId: 'worker-tamper', capabilities: [] }, timestamp: now });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-tamper' });
   transport.registerWorker({ workerId: 'worker-tamper', identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
 

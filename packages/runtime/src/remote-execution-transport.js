@@ -11,6 +11,7 @@ export class InMemoryRemoteExecutionTransport {
   #clock;
   #leaseTtlMs;
   #nextId = 0;
+  #nextRequestId = 0;
   #registry;
   #leaseManager;
   #protocolSessions = new Map();
@@ -92,7 +93,7 @@ export class InMemoryRemoteExecutionTransport {
 
     const session = this.#protocolSessions.get(worker.workerId);
     const envelope = createProtocolEnvelope({
-      requestId: request.requestId ?? `req-${request.executionId}-${this.#nextId + 1}`,
+      requestId: request.requestId ?? `req-${request.executionId}-${++this.#nextRequestId}`,
       method: 'execute',
       executionId: request.executionId,
       payload: request,

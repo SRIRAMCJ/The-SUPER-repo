@@ -1,4 +1,4 @@
-import { createProtocolEnvelope, RemoteProtocolSession, REMOTE_EXECUTION_PROTOCOL_VERSION } from './remote-execution-protocol.js';
+import { createProtocolEnvelope, validateProtocolEnvelope, RemoteProtocolSession, REMOTE_EXECUTION_PROTOCOL_VERSION } from './remote-execution-protocol.js';
 import { RemoteAuthenticationSession } from './remote-execution-auth.js';
 
 const SCHEMA_VERSION = '0.4.0';

@@ -73,3 +73,5 @@ jobs:
             exit "$failures"
           fi
           echo "=== RUNTIME DIAGNOSTIC PASSED: all runtime test files passed ==="
+      - name: Distributed idempotent effects regression
+        run: node --test packages/runtime/test/distributed-effect-ledger.test.js

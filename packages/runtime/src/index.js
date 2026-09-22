@@ -58,3 +58,17 @@ export { SharedContext } from './shared-context.js';
 export { TeamExecutionCoordinator } from './team-coordinator.js';
 export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';
+export { ExecutionSandbox, SANDBOX_SCHEMA_VERSION, SANDBOX_TERMINAL_STATES } from './sandbox.js';
+export { ExecutionBackendRegistry, SandboxExecutionBackend, EXECUTION_BACKEND_SCHEMA_VERSION } from './execution-backend.js';
+
+export { RemoteExecutionBackend, REMOTE_EXECUTION_BACKEND_SCHEMA_VERSION } from './remote-execution-backend.js';
+export { InMemoryRemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION } from './remote-execution-transport.js';
+export { RemoteWorkerRegistry, REMOTE_WORKER_PROTOCOL_SCHEMA_VERSION } from './remote-worker-registry.js';
+
+export { RemoteWorkerLeaseManager, REMOTE_WORKER_LEASE_SCHEMA_VERSION } from './remote-worker-lease.js';
+
+export { RemoteWorkerHeartbeatMonitor, REMOTE_WORKER_HEARTBEAT_SCHEMA_VERSION } from './remote-worker-heartbeat.js';
+
+export { RemoteWorkerScheduler, REMOTE_WORKER_SCHEDULER_SCHEMA_VERSION } from './remote-worker-scheduler.js';
+export { RemoteExecutionRecovery, REMOTE_EXECUTION_RECOVERY_SCHEMA_VERSION } from './remote-execution-recovery.js';
+export { RemoteWorkerFailoverController, REMOTE_WORKER_FAILOVER_SCHEMA_VERSION } from './remote-worker-failover.js';

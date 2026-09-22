@@ -33,7 +33,7 @@ test('gap repair validates the complete contiguous range before ingest and advan
   assert.equal(result.state, 'succeeded');
   assert.equal(result.repaired, 2);
   assert.equal(imported.length, 2);
-  assert.equal(checkpoint.sourceSequence, 4);
+  assert.equal(checkpoint.current.sourceSequence, 4);
 });
 
 test('gap repair rejects incomplete or non-contiguous source responses without ingesting', async () => {

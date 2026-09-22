@@ -12,7 +12,7 @@ export class AgentExecutionAdmission {
     this.registry = registry; this.governance = governance; this.taskGraphExecutor = taskGraphExecutor; this.executionEngine = executionEngine; this.clock = clock; this.idFactory = idFactory; this.maxPlanAgeMs = maxPlanAgeMs; this.events = events;
   }
   admit(plan, context = {}) {
-    const timestamp = this.clock().toISOString(); const reasons = validatePlan(plan, this.clock(), this.maxPlanAgeMs);
+    const timestamp = this.clock().toISOString(); const reasons = validatePlan(plan, this.clock, this.maxPlanAgeMs);
     if (reasons.length) return decision('invalid', plan?.planId ?? null, timestamp, reasons);
     if (plan.executionDecision?.status !== 'ready') return decision(plan.executionDecision?.status === 'blocked' ? 'blocked' : 'invalid', plan.planId, timestamp, plan.executionDecision?.reasons?.length ? clone(plan.executionDecision.reasons) : [{ code: 'PLAN_NOT_READY', message: 'Plan is not ready for execution' }]);
     const capabilityReasons = [];

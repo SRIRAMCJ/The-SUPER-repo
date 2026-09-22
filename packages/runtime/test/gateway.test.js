@@ -67,8 +67,8 @@ test('gateway executes explicit cancellation action with a reason', async () => 
   const gateway = new ControlPlaneGateway({ controlPlane: controlPlane() });
   const result = await gateway.handle({ method: 'POST', path: '/executions/exec-1/cancel', body: { reason: 'operator intervention' } });
   assert.equal(result.status, 202);
-  assert.equal(result.body.data.result.status, 'cancelled');
-  assert.equal(result.body.data.result.reason, 'operator intervention');
+  assert.equal(result.body.data.status, 'cancelled');
+  assert.equal(result.body.data.reason, 'operator intervention');
 });
 
 test('gateway returns structured errors for unknown routes and invalid input', async () => {
@@ -128,4 +128,38 @@ test('gateway returns 429 when the request guard rate limit is exceeded', async 
   assert.equal(first.status, 200);
   assert.equal(second.status, 429);
   assert.equal(second.body.error.code, 'RATE_LIMITED');
+});
+
+
+test('gateway completes admitted idempotent requests on authorization and routing failures', async () => {
+  const deniedGateway = new ControlPlaneGateway({
+    controlPlane: controlPlane(),
+    authorize: () => false,
+    requestGuard: new RuntimeRequestGuard({ maxRequests: 10 }),
+  });
+  const deniedRequest = {
+    method: 'POST',
+    path: '/commands',
+    headers: { 'x-client-id': 'client-a', 'idempotency-key': 'auth-1' },
+    body: { command: 'runtime.health' },
+  };
+  const denied = await deniedGateway.handle(deniedRequest);
+  const deniedReplay = await deniedGateway.handle(deniedRequest);
+  assert.equal(denied.status, 403);
+  assert.deepEqual(deniedReplay, denied);
+
+  const gateway = new ControlPlaneGateway({
+    controlPlane: controlPlane(),
+    requestGuard: new RuntimeRequestGuard({ maxRequests: 10 }),
+  });
+  const missingRequest = {
+    method: 'POST',
+    path: '/missing',
+    headers: { 'x-client-id': 'client-a', 'idempotency-key': 'route-1' },
+    body: { value: 1 },
+  };
+  const missing = await gateway.handle(missingRequest);
+  const missingReplay = await gateway.handle(missingRequest);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missingReplay, missing);
 });

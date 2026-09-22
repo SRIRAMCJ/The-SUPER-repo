@@ -81,7 +81,11 @@ export class DistributedEffectLedger {
       const committed = await this.commit(claim.record.effectKey, claim.record.claimToken, result);
       return freeze({ state: 'committed', result: committed.record.result, record: committed.record });
     } catch (error) {
-      await this.fail(claim.record.effectKey, claim.record.claimToken, error, { retryable: options.retryable !== false });
+      try {
+        await this.fail(claim.record.effectKey, claim.record.claimToken, error, { retryable: options.retryable !== false });
+      } catch (ledgerFailure) {
+        error.ledgerFailure = ledgerFailure;
+      }
       throw error;
     }
   }
@@ -152,6 +156,7 @@ export function fingerprintEffect({ executionId, operation, input, capabilityFin
   return createHash('sha256').update(canonicalize({ executionId, operation, input, capabilityFingerprint })).digest('hex');
 }
 function canonicalize(value) {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') throw new TypeError('fingerprint input must contain only JSON-like values');
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return '[' + value.map(canonicalize).join(',') + ']';
   return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + canonicalize(value[k])).join(',') + '}';
@@ -159,7 +164,7 @@ function canonicalize(value) {
 function normalizeScope(s) { return Object.freeze({ executionId: nullable(s.executionId, 'executionId'), operation: nullable(s.operation, 'operation'), workerId: nullable(s.workerId, 'workerId'), capabilityFingerprint: nullable(s.capabilityFingerprint, 'capabilityFingerprint') }); }
 function sameScope(a, b) { return a.executionId === b.executionId && a.operation === b.operation && a.workerId === b.workerId && a.capabilityFingerprint === b.capabilityFingerprint; }
 function nullable(v, n) { if (v == null) return null; if (typeof v !== 'string' || !v.trim()) throw new TypeError(n + ' must be null or a non-empty string'); return v; }
-function normalizeKey(v, n) { if (typeof v !== 'string' || !v.trim()) throw new TypeError(n + ' must be a non-empty string'); return v.trim().slice(0, 512); }
+function normalizeKey(v, n) { if (typeof v !== 'string' || !v.trim()) throw new TypeError(n + ' must be a non-empty string'); const key = v.trim(); if (key.length > 512) throw new TypeError(n + ' must not exceed 512 characters'); return key; }
 function assertFingerprint(v) { if (typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v)) throw new TypeError('fingerprint must be a SHA-256 hex digest'); }
 function validateFuture(v, now) { if (!Number.isFinite(v) || v <= now) throw new TypeError('expiresAt must be a future timestamp'); }
 function normalizeError(e) { return { code: typeof e?.code === 'string' && e.code ? e.code : 'EFFECT_FAILED', message: e instanceof Error ? e.message : String(e ?? 'Effect failed'), retryable: Boolean(e?.retryable) }; }

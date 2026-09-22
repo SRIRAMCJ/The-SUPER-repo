@@ -266,12 +266,12 @@ test('transport fails closed on tampered authenticated execution requests', asyn
   const workerIdentity = createRemoteIdentity({ principalId: 'worker-tamper', role: 'worker', instanceId: 'worker-tamper-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const controllerIdentity = createRemoteIdentity({ principalId: 'controller-tamper', role: 'controller', instanceId: 'controller-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const transport = new InMemoryRemoteExecutionTransport({ clock: () => now, authKeyRing: keyRing, authTrustedIdentities: [controllerIdentity] });
-  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-worker-tamper', method: 'heartbeat', payload: { workerId: 'worker-tamper', capabilities: [] }, timestamp: now });
+  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-worker-tamper', method: 'heartbeat', payload: { workerId: 'worker-tamper', capabilities: ['runtime.execute'] }, timestamp: now });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-tamper' });
-  transport.registerWorker({ workerId: 'worker-tamper', identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
+  transport.registerWorker({ workerId: 'worker-tamper', capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
 
   const signedRequest = { executionId: 'tamper-exec', requestId: 'tamper-request', capability: { id: 'runtime.execute' } };
-  const signedEnvelope = createProtocolEnvelope({ requestId: signedRequest.requestId, method: 'execute', executionId: signedRequest.executionId, payload: signedRequest, timestamp: now });
+  const signedEnvelope = createProtocolEnvelope({ requestId: signedRequest.requestId, method: 'execute', executionId: signedRequest.executionId, payload: signedRequest, timestamp: now, deadlineAt: null, traceId: null });
   const authentication = createSignedEnvelope({ identity: controllerIdentity, envelope: signedEnvelope, keyRing, nonce: 'tamper-execute' });
   await assert.rejects(
     () => transport.execute({ ...signedRequest, capability: { id: 'runtime.other' }, authentication }),

@@ -72,3 +72,6 @@ export { RemoteWorkerHeartbeatMonitor, REMOTE_WORKER_HEARTBEAT_SCHEMA_VERSION } 
 export { RemoteWorkerScheduler, REMOTE_WORKER_SCHEDULER_SCHEMA_VERSION } from './remote-worker-scheduler.js';
 export { RemoteExecutionRecovery, REMOTE_EXECUTION_RECOVERY_SCHEMA_VERSION } from './remote-execution-recovery.js';
 export { RemoteWorkerFailoverController, REMOTE_WORKER_FAILOVER_SCHEMA_VERSION } from './remote-worker-failover.js';
+export { InMemoryRemoteExecutionStore, FileRemoteExecutionStore, REMOTE_EXECUTION_STORE_SCHEMA_VERSION } from './remote-execution-store.js';
+export { RemoteWorkerIdentityRegistry, REMOTE_WORKER_IDENTITY_SCHEMA_VERSION } from './remote-worker-identity.js';
+export { RemoteRecoveryCoordinator, REMOTE_RECOVERY_COORDINATOR_SCHEMA_VERSION } from './remote-recovery-coordinator.js';

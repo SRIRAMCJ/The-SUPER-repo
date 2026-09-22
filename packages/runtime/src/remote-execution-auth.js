@@ -103,13 +103,13 @@ export class RemoteAuthenticationSession {
     return identity;
   }
 
-  authenticate({ identity, envelope, signature, nonce = randomUUID() } = {}) {
+  authenticate({ identity, envelope, signature, nonce = randomUUID(), requireTrustedIdentity = this.#requireTrustedIdentity } = {}) {
     const now = this.#clock();
     const identityError = validateIdentity(identity, { now, maxClockSkewMs: this.#maxClockSkewMs });
     if (!identityError.ok) return identityError;
     const secret = this.#keyRing.secretFor(identity.keyId);
     if (!secret) return { ok: false, code: 'UNKNOWN_KEY' };
-    if (this.#requireTrustedIdentity) {
+    if (requireTrustedIdentity) {
       const trusted = this.#identities.get(identity.principalId);
       if (!trusted || !sameIdentity(trusted, identity)) return { ok: false, code: 'UNTRUSTED_IDENTITY', retryable: false };
     }

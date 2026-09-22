@@ -108,3 +108,33 @@ test('durable recovery leases fence concurrent recovery claims', async () => {
   const reclaimed = await storeB.claimRecovery(record.missionExecutionId, 'worker-b', 30000);
   assert.equal(reclaimed.recoveryLease.owner, 'worker-b');
 });
+
+
+test('vertical mission restart preserves durable recovery lease fencing', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'super-vertical-lease-restart-'));
+  const missionPath = path.join(directory, 'missions.json');
+  const first = await new FileMissionStore(missionPath).init();
+  const record = await first.save({
+    missionId: 'mission/restart-lease',
+    missionExecutionId: 'exec/restart-lease',
+    type: 'vertical-mission',
+    status: 'executing',
+    recovery: { status: 'available', resumable: true }
+  });
+  await first.claimRecovery(record.missionExecutionId, 'worker-a', 30000);
+
+  const restarted = await new FileMissionStore(missionPath).init();
+  const engine = new VerticalMissionEngine({
+    taskDecomposer: new TaskDecomposer(),
+    taskGraphExecutor: new TaskGraphExecutor({
+      stateStore: new ExecutionStateStore(),
+      executeTask: async () => ({ ok: true })
+    }),
+    missionStore: restarted
+  });
+
+  await assert.rejects(
+    () => engine.recover(record.missionExecutionId, { resume: true, owner: 'worker-b' }),
+    (error) => error.code === 'MISSION_RECOVERY_LEASE_HELD'
+  );
+});

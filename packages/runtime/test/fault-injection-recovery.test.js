@@ -10,4 +10,24 @@ test('duplicate recovery keys are single-flight',async()=>{let release;const gat
 test('faulted operation can use recovery callback',async()=>{const f=new FaultInjectionEngine();f.register({scenarioId:'s',name:'fail',match:()=>true,phase:'before'});const result=await withFaultInjection(()=>{throw new Error('boom')},{faults:f,recovery:async()=>({outcome:'recovered'})});assert.equal(result.outcome,'recovered');});
 
 
-test('fault wrapper applies registered throw faults and exposes checkpoints',async()=>{\n  const f=new FaultInjectionEngine();\n  f.register({scenarioId:'before',name:'before fault',match:()=>true,phase:'before',fault:'throw'});\n  const result=await withFaultInjection(()=>{ throw new Error('should not run'); },{faults:f});\n  assert.equal(result.outcome,'failed');\n  assert.match(result.error.message,/Injected fault: before fault/);\n});\n\ntest('during faults are applied at explicit execution checkpoints',async()=>{\n  const f=new FaultInjectionEngine();\n  f.register({scenarioId:'during',name:'during fault',match:()=>true,phase:'during',fault:'throw'});\n  let reached=false;\n  const result=await withFaultInjection(async({checkpoint})=>{ reached=true; await checkpoint('during'); return 'ok'; },{faults:f});\n  assert.equal(reached,true);\n  assert.equal(result.outcome,'failed');\n  assert.match(result.error.message,/Injected fault: during fault/);\n});\n\ntest('recovery validates configuration and bounds history',()=>{\n  assert.throws(()=>new RecoveryController({maxHistory:0}),/maxHistory must be a positive integer/);\n});\n
+test('fault wrapper applies registered throw faults and exposes checkpoints',async()=>{
+  const f=new FaultInjectionEngine();
+  f.register({scenarioId:'before',name:'before fault',match:()=>true,phase:'before',fault:'throw'});
+  const result=await withFaultInjection(()=>{ throw new Error('should not run'); },{faults:f});
+  assert.equal(result.outcome,'failed');
+  assert.match(result.error.message,/Injected fault: before fault/);
+});
+
+test('during faults are applied at explicit execution checkpoints',async()=>{
+  const f=new FaultInjectionEngine();
+  f.register({scenarioId:'during',name:'during fault',match:()=>true,phase:'during',fault:'throw'});
+  let reached=false;
+  const result=await withFaultInjection(async({checkpoint})=>{ reached=true; await checkpoint('during'); return 'ok'; },{faults:f});
+  assert.equal(reached,true);
+  assert.equal(result.outcome,'failed');
+  assert.match(result.error.message,/Injected fault: during fault/);
+});
+
+test('recovery validates configuration and bounds history',()=>{
+  assert.throws(()=>new RecoveryController({maxHistory:0}),/maxHistory must be a positive integer/);
+});

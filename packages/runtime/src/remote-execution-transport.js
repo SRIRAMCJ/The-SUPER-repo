@@ -195,14 +195,11 @@ export class InMemoryRemoteExecutionTransport {
 
   #authenticateWorkerRegistration({ workerId, identity, authentication, protocolVersion, capabilities }) {
     if (!identity || identity.principalId !== workerId || identity.role !== 'worker') throw Object.assign(new Error('Worker identity does not match registration'), { code: 'INVALID_WORKER_IDENTITY' });
-    const envelope = createProtocolEnvelope({
-      protocolVersion,
-      requestId: `register-${workerId}`,
-      method: 'heartbeat',
-      payload: { workerId, capabilities },
-      timestamp: this.#clock(),
-    });
-    const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce });
+    const envelope = authentication?.envelope;
+    const protocolValidation = envelope ? validateProtocolEnvelope(envelope, { now: this.#clock(), supportedVersions: [protocolVersion] }) : { ok: false, code: 'AUTH_ENVELOPE_MISMATCH' };
+    if (!protocolValidation.ok) throw Object.assign(new Error(protocolValidation.code), { code: protocolValidation.code, retryable: protocolValidation.retryable });
+    if (envelope.method !== 'heartbeat' || envelope.protocolVersion !== protocolVersion || envelope.payload?.workerId !== workerId || JSON.stringify([...(envelope.payload?.capabilities ?? [])].sort()) !== JSON.stringify([...capabilities].sort())) throw Object.assign(new Error('Authentication envelope does not match worker registration'), { code: 'AUTH_ENVELOPE_MISMATCH' });
+    const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce, requireTrustedIdentity: false });
     if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
     const authorization = this.#authSession.authorize({ identity, method: envelope.method });
     if (!authorization.ok) throw Object.assign(new Error(authorization.code), { code: authorization.code });

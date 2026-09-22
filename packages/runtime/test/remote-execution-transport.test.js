@@ -275,7 +275,7 @@ test('transport fails closed on tampered authenticated execution requests', asyn
   const authentication = createSignedEnvelope({ identity: controllerIdentity, envelope: signedEnvelope, keyRing, nonce: 'tamper-execute' });
   await assert.rejects(
     () => transport.execute({ ...signedRequest, capability: { id: 'runtime.other' }, authentication }),
-    error => error.code === 'INVALID_SIGNATURE',
+    error => error.code === 'AUTH_ENVELOPE_MISMATCH',
   );
 });
 
@@ -302,9 +302,9 @@ test('transport rejects an authenticated but untrusted controller identity', asy
   const controllerIdentity = createRemoteIdentity({ principalId: 'controller-untrusted', role: 'controller', instanceId: 'controller-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const trustedController = createRemoteIdentity({ principalId: 'trusted-controller', role: 'controller', instanceId: 'trusted-controller-inc-1', issuedAt: now - 10, expiresAt: now + 60_000, keyId: 'auth-1' });
   const transport = new InMemoryRemoteExecutionTransport({ clock: () => now, authKeyRing: keyRing, authTrustedIdentities: [trustedController] });
-  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-untrusted', method: 'heartbeat', payload: { workerId: workerIdentity.principalId, capabilities: [] }, timestamp: now });
+  const registrationEnvelope = createProtocolEnvelope({ requestId: 'register-untrusted', method: 'heartbeat', payload: { workerId: workerIdentity.principalId, capabilities: ['runtime.execute'] }, timestamp: now });
   const registrationAuth = createSignedEnvelope({ identity: workerIdentity, envelope: registrationEnvelope, keyRing, nonce: 'register-untrusted' });
-  transport.registerWorker({ workerId: workerIdentity.principalId, identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
+  transport.registerWorker({ workerId: workerIdentity.principalId, capabilities: ['runtime.execute'], identity: workerIdentity, authentication: registrationAuth, execute: async () => ({ status: 'succeeded' }) });
   const request = { executionId: 'untrusted-exec', requestId: 'untrusted-request', capability: { id: 'runtime.execute' } };
   const envelope = createProtocolEnvelope({ requestId: request.requestId, method: 'execute', executionId: request.executionId, payload: request, timestamp: now });
   const authentication = createSignedEnvelope({ identity: controllerIdentity, envelope, keyRing, nonce: 'untrusted-controller' });

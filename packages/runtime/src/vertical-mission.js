@@ -51,7 +51,7 @@ export class VerticalMissionEngine {
       execution = { status: 'failed', error: normalizeError(error), executionId: missionExecutionId };
     }
     if (execution.status !== 'succeeded') {
-      if (execution.error?.retryable) {
+      if (isRetryableExecution(execution)) {
         const interrupted = await this.missionStore.save({ ...record, status: 'executing', result: structuredClone(execution), recovery: { status: 'available', resumable: true, reason: 'Task graph failed with a retryable error; unfinished work can be resumed.' } }, record.version);
         this.#emit('mission.recovery.available', interrupted);
         return interrupted;
@@ -145,6 +145,6 @@ function sanitizeContext(context) {
   delete value.abortSignal;
   return value;
 }
-function normalizeError(error) {
+function isRetryableExecution(execution) {\n  if (execution?.error?.retryable) return true;\n  return Array.isArray(execution?.results) && execution.results.some((result) => result?.error?.retryable === true);\n}\n\nfunction normalizeError(error) {
   return { code: error?.code ?? 'MISSION_ERROR', message: error instanceof Error ? error.message : String(error), retryable: Boolean(error?.retryable) };
 }

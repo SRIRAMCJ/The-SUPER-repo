@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { FaultInjectionEngine, RecoveryController, withFaultInjection } from '../src/fault-injection-recovery.js';
+
+test('fault scenarios trigger deterministically and are bounded', async()=>{const f=new FaultInjectionEngine({clock:()=>1000});f.register({scenarioId:'s',name:'fail once',match:c=>c.executionId==='x',phase:'before',maxTriggers:1});const a=await f.evaluate({executionId:'x'},'before',()=>0);const b=await f.evaluate({executionId:'x'},'before',()=>0);assert.equal(a.length,1);assert.equal(b.length,0);assert.equal(f.history().length,1);});
+test('non-matching scenarios do not trigger',async()=>{const f=new FaultInjectionEngine();f.register({scenarioId:'s',name:'x',match:c=>c.executionId==='other'});assert.equal((await f.evaluate({executionId:'x'},'before',()=>0)).length,0);});
+test('recovery retries and records successful recovery',async()=>{let calls=0;const r=new RecoveryController({clock:()=>1000});const out=await r.recover('execution-1',{attempts:3,operation:async()=>{calls++;if(calls<2)throw new Error('transient');return 'ok';}});assert.equal(out.status,'recovered');assert.equal(calls,2);assert.equal(out.value,'ok');});
+test('recovery stops on permanent failure',async()=>{let calls=0;const r=new RecoveryController();const out=await r.recover('execution-2',{attempts:3,operation:async()=>{calls++;throw new Error('permanent');},shouldRetry:()=>false});assert.equal(out.status,'failed');assert.equal(calls,1);});
+test('duplicate recovery keys are single-flight',async()=>{let release;const gate=new Promise(r=>release=r);const r=new RecoveryController();const a=r.recover('same',{operation:async()=>{await gate;return 1;}});const b=await r.recover('same',{operation:async()=>2});release();const av=await a;assert.equal(b.status,'running');assert.equal(av.status,'recovered');});
+test('faulted operation can use recovery callback',async()=>{const f=new FaultInjectionEngine();f.register({scenarioId:'s',name:'fail',match:()=>true,phase:'before'});const result=await withFaultInjection(()=>{throw new Error('boom')},{faults:f,recovery:async()=>({outcome:'recovered'})});assert.equal(result.outcome,'recovered');});
+
+
+test('fault wrapper applies registered throw faults and exposes checkpoints',async()=>{
+  const f=new FaultInjectionEngine();
+  f.register({scenarioId:'before',name:'before fault',match:()=>true,phase:'before',fault:'throw'});
+  const result=await withFaultInjection(()=>{ throw new Error('should not run'); },{faults:f});
+  assert.equal(result.outcome,'failed');
+  assert.match(result.error.message,/Injected fault: before fault/);
+});
+
+test('during faults are applied at explicit execution checkpoints',async()=>{
+  const f=new FaultInjectionEngine();
+  f.register({scenarioId:'during',name:'during fault',match:()=>true,phase:'during',fault:'throw'});
+  let reached=false;
+  const result=await withFaultInjection(async({checkpoint})=>{ reached=true; await checkpoint('during'); return 'ok'; },{faults:f});
+  assert.equal(reached,true);
+  assert.equal(result.outcome,'failed');
+  assert.match(result.error.message,/Injected fault: during fault/);
+});
+
+test('recovery validates configuration and bounds history',()=>{
+  assert.throws(()=>new RecoveryController({maxHistory:0}),/maxHistory must be a positive integer/);
+});

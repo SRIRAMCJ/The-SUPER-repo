@@ -58,7 +58,7 @@ export class DistributedCoordinationKernel {
     return this.#atomic(async () => {
       const now = this.clock(); this.#expire(now); const current = this.#records.get(key);
       if (!current) return result('not_found');
-      if (!matches(current, ownerId, requestId, fencingToken)) return result('fenced', current);
+      if (!matches(current, ownerId, requestId, fencingToken, this.clock())) return result('fenced', current);
       const renewed = { ...current, expiresAt: now + leaseMs, updatedAt: now };
       await this.#append({ op: 'renew', record: renewed }); this.#records.set(key, freeze(renewed));
       return result('renewed', renewed);
@@ -146,8 +146,8 @@ export function coordinationFingerprint({ resource, ownerId, requestId, fencingT
   return createHash('sha256').update(canonicalize({ resource, ownerId, requestId, fencingToken })).digest('hex');
 }
 
-function matches(record, ownerId, requestId, fencingToken) {
-  return record.status === 'held' && record.ownerId === ownerId && record.requestId === requestId && record.fencingToken === fencingToken && record.expiresAt > Date.now();
+function matches(record, ownerId, requestId, fencingToken, now) {
+  return record.status === 'held' && record.ownerId === ownerId && record.requestId === requestId && record.fencingToken === fencingToken && record.expiresAt > now;
 }
 function normalize(v, name) { if (typeof v !== 'string' || !v.trim() || v.trim().length > 512) throw new TypeError(name + ' must be a non-empty string <=512 chars'); return v.trim(); }
 function assertToken(v) { if (!Number.isInteger(v) || v < 1) throw new TypeError('fencingToken must be a positive integer'); }

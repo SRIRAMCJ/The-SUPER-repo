@@ -90,3 +90,4 @@ export { DistributedCoordinationKernel, DISTRIBUTED_COORDINATION_SCHEMA_VERSION,
 export { DurableObservabilityPipeline, DURABLE_OBSERVABILITY_SCHEMA_VERSION, OBSERVABILITY_EVENT_STATES } from './durable-observability.js';
 
 export { FaultInjectionEngine, RecoveryController, withFaultInjection, FAULT_INJECTION_SCHEMA_VERSION, FAULT_PHASES, RECOVERY_OUTCOMES } from './fault-injection-recovery.js';
+export { VerticalMissionEngine, VERTICAL_MISSION_SCHEMA_VERSION } from './vertical-mission.js';

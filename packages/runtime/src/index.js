@@ -82,3 +82,5 @@ export { RemoteAuthKeyRing, RemoteAuthenticationSession, createRemoteIdentity, c
 export { CAPABILITY_ATTESTATION_SCHEMA_VERSION, CAPABILITY_ATTESTATION_ALGORITHM, canonicalizeCapabilities, canonicalizeProtocolVersions, capabilityFingerprint, createCapabilityAttestation, signCapabilityAttestation, verifyCapabilityAttestation, validateCapabilityAttestation } from './remote-capability-attestation.js';
 
 export { DurableExecutionStateMachine, DURABLE_EXECUTION_STATE_MACHINE_SCHEMA_VERSION, EXECUTION_LIFECYCLE_STATES, isValidExecutionTransition, allowedExecutionTransitions } from './durable-execution-state-machine.js';
+
+export { DistributedEffectLedger, DISTRIBUTED_EFFECT_LEDGER_SCHEMA_VERSION, DISTRIBUTED_EFFECT_STATES, fingerprintEffect } from './distributed-effect-ledger.js';

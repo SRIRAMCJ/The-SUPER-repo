@@ -67,7 +67,7 @@ export class InMemoryRemoteExecutionTransport {
       const protocolSession = this.#protocolSessions.get(workerId);
       const protocolValidation = protocolSession?.validate(envelope);
       if (protocolValidation && !protocolValidation.ok) throw Object.assign(new Error(protocolValidation.code), { code: protocolValidation.code, retryable: protocolValidation.retryable });
-      const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce });
+      const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce, requireTrustedIdentity: false });
       if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
       const authorization = this.#authSession.authorize({ identity, method: envelope.method });
       if (!authorization.ok) throw Object.assign(new Error(authorization.code), { code: authorization.code });

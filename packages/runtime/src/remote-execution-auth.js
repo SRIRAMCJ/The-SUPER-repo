@@ -60,15 +60,16 @@ export class RemoteAuthKeyRing {
   secretFor(keyId) { return this.#keys.get(keyId) ?? null; }
 }
 
-export function signRemoteEnvelope({ identity, envelope, secret } = {}) {
+export function signRemoteEnvelope({ identity, envelope, nonce = '', secret } = {}) {
   if (!identity || !envelope || typeof secret !== 'string') throw new TypeError('identity, envelope and secret are required');
-  const material = canonicalize({ identity, envelope });
+  if (typeof nonce !== 'string' || !nonce.trim()) throw new TypeError('nonce must be a non-empty string');
+  const material = canonicalize({ identity, envelope, nonce });
   return createHmac('sha256', secret).update(material).digest('base64url');
 }
 
-export function verifyRemoteEnvelope({ identity, envelope, signature, secret } = {}) {
+export function verifyRemoteEnvelope({ identity, envelope, nonce, signature, secret } = {}) {
   if (typeof signature !== 'string' || typeof secret !== 'string') return { ok: false, code: 'INVALID_SIGNATURE' };
-  const expected = signRemoteEnvelope({ identity, envelope, secret });
+  const expected = signRemoteEnvelope({ identity, envelope, nonce, secret });
   const left = Buffer.from(signature);
   const right = Buffer.from(expected);
   if (left.length !== right.length || !timingSafeEqual(left, right)) return { ok: false, code: 'INVALID_SIGNATURE' };
@@ -115,7 +116,7 @@ export class RemoteAuthenticationSession {
     }
     if (typeof nonce !== 'string' || !nonce.trim()) return { ok: false, code: 'INVALID_NONCE', retryable: false };
     if (this.#seenNonces.has(nonce)) return { ok: false, code: 'REPLAY_NONCE', retryable: false };
-    const signatureResult = verifyRemoteEnvelope({ identity, envelope, signature, secret });
+    const signatureResult = verifyRemoteEnvelope({ identity, envelope, nonce, signature, secret });
     if (!signatureResult.ok) return signatureResult;
     this.#seenNonces.add(nonce);
     this.#nonceOrder.push(nonce);
@@ -139,7 +140,7 @@ export function createSignedEnvelope({ identity, envelope, keyRing, nonce = rand
     identity: structuredClone(identity),
     envelope: structuredClone(envelope),
     nonce,
-    signature: signRemoteEnvelope({ identity, envelope, secret }),
+    signature: signRemoteEnvelope({ identity, envelope, nonce, secret }),
   });
 }
 

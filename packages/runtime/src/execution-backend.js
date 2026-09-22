@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = '0.1.0';
+const SCHEMA_VERSION = '0.2.0';
 
 export const EXECUTION_BACKEND_SCHEMA_VERSION = SCHEMA_VERSION;
 
@@ -31,31 +31,65 @@ export class SandboxExecutionBackend {
   }
 
   async execute({ executionId, input = {}, context = {}, capability }) {
-    const command = input.command ?? capability?.execution?.command;
-    const args = input.args ?? capability?.execution?.args ?? [];
-    if (typeof command !== 'string' || !command) return failed(executionId, 'INVALID_COMMAND', 'Sandbox execution requires input.command or capability.execution.command');
+    const execution = capability?.execution;
+    if (!execution || typeof execution !== 'object') return failed(executionId, 'SANDBOX_CONFIG_MISSING', 'Sandbox execution requires capability.execution');
+    const command = execution.command;
+    const args = execution.args ?? [];
+    if (typeof command !== 'string' || !command.trim()) return failed(executionId, 'INVALID_COMMAND', 'Sandbox execution requires capability.execution.command');
     if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) return failed(executionId, 'INVALID_ARGUMENTS', 'Sandbox execution args must be an array of strings');
 
-    const suppliedOptions = input.options && typeof input.options === 'object' && !Array.isArray(input.options) ? input.options : {};
+    const timeoutMs = minTimeout(context.timeoutMs, execution.timeoutMs);
     const result = await this.sandbox.execute(command, args, {
-      ...suppliedOptions,
       executionId,
       signal: context.signal,
-      timeoutMs: context.timeoutMs ?? suppliedOptions.timeoutMs,
-      policy: suppliedOptions.policy ?? capability?.execution?.policy,
+      timeoutMs,
+      maxOutputBytes: execution.maxOutputBytes,
+      maxInputBytes: execution.maxInputBytes,
+      cwd: execution.cwd,
+      env: execution.env,
+      policy: execution.policy,
+      stdin: JSON.stringify(input),
     });
 
-    return {
-      executionId,
-      status: result.status,
-      output: { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.exitCode ?? null, signal: result.signal ?? null },
-      ...(result.error ? { error: result.error } : {}),
-      backend: 'sandbox',
-      record: result,
-    };
+    if (result.status !== 'succeeded') {
+      return {
+        executionId,
+        status: result.status,
+        ...(result.error ? { error: result.error } : {}),
+        backend: 'sandbox',
+        record: result,
+      };
+    }
+
+    try {
+      const output = execution.output === 'text' ? result.stdout : JSON.parse(result.stdout);
+      return {
+        executionId,
+        status: 'succeeded',
+        output,
+        backend: 'sandbox',
+        record: result,
+      };
+    } catch (error) {
+      return failed(executionId, 'SANDBOX_OUTPUT_INVALID', error instanceof Error ? error.message : String(error), result);
+    }
   }
 }
 
-function failed(executionId, code, message) {
-  return { executionId, status: 'failed', error: { code, message, retryable: false }, backend: 'sandbox' };
+function minTimeout(parent, declared) {
+  if (parent === undefined || parent === null) return declared;
+  if (!Number.isFinite(parent) || parent < 1) throw Object.assign(new Error('timeoutMs must be a positive finite number'), { code: 'INVALID_TIMEOUT', retryable: false });
+  if (declared === undefined || declared === null) return parent;
+  if (!Number.isFinite(declared) || declared < 1) throw Object.assign(new Error('execution.timeoutMs must be a positive finite number'), { code: 'INVALID_TIMEOUT', retryable: false });
+  return Math.min(parent, declared);
+}
+
+function failed(executionId, code, message, record = undefined) {
+  return {
+    executionId,
+    status: 'failed',
+    error: { code, message, retryable: false },
+    backend: 'sandbox',
+    ...(record ? { record } : {}),
+  };
 }

@@ -51,7 +51,7 @@ export function validateProtocolEnvelope(envelope, { now = Date.now(), supported
 
 export function negotiateProtocol({ offered = [], supported = [DEFAULT_PROTOCOL_VERSION] } = {}) {
   if (!Array.isArray(offered) || !Array.isArray(supported)) throw new TypeError('offered and supported must be arrays');
-  const common = offered.filter((version) => supported.includes(version));
+  const common = supported.filter((version) => offered.includes(version));
   if (common.length === 0) return Object.freeze({ state: 'incompatible', code: 'UNSUPPORTED_PROTOCOL_VERSION' });
   return Object.freeze({ state: 'negotiated', protocolVersion: common[common.length - 1] });
 }

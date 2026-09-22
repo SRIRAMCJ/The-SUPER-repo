@@ -71,3 +71,27 @@ test('canonical fingerprints ignore object key order', () => {
   const b = fingerprintEffect({ executionId: 'e', operation: 'op', input: { a: { x: 3, y: 2 }, z: 1 } });
   assert.equal(a, b);
 });
+
+
+test('effect keys longer than the bounded key size are rejected rather than truncated', async () => {
+  const l = new DistributedEffectLedger();
+  const fp = fingerprintEffect({ executionId: 'e', operation: 'op', input: { id: 1 } });
+  await assert.rejects(() => l.claim('x'.repeat(513), fp), /512/);
+});
+
+test('non-JSON fingerprint values are rejected deterministically', () => {
+  assert.throws(() => fingerprintEffect({ executionId: 'e', operation: 'op', input: { bad: undefined } }), /JSON-like/);
+});
+
+test('handler failure is preserved if ledger failure recording also fails', async () => {
+  const l = new DistributedEffectLedger();
+  const fp = fingerprintEffect({ executionId: 'e', operation: 'op', input: { id: 2 } });
+  const originalFail = l.fail.bind(l);
+  l.fail = async () => { throw new Error('ledger recording failed'); };
+  await assert.rejects(() => l.execute('fx', fp, async () => { throw new Error('handler failed'); }), error => {
+    assert.equal(error.message, 'handler failed');
+    assert.equal(error.ledgerFailure?.message, 'ledger recording failed');
+    return true;
+  });
+  l.fail = originalFail;
+});

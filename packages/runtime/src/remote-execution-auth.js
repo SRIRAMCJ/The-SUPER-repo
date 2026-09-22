@@ -4,6 +4,7 @@ const SCHEMA_VERSION = '0.1.0';
 const AUTH_VERSION = '1.0';
 const DEFAULT_MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_CREDENTIAL_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_SEEN_NONCES = 10_000;
 const ROLES = new Set(['controller', 'worker']);
 const METHODS_BY_ROLE = Object.freeze({
   controller: new Set(['execute', 'cancel', 'inspect']),
@@ -79,17 +80,26 @@ export class RemoteAuthenticationSession {
   #clock;
   #maxClockSkewMs;
   #seenNonces = new Set();
+  #nonceOrder = [];
   #identities = new Map();
+  #requireTrustedIdentity;
+  #maxSeenNonces;
 
-  constructor({ keyRing, clock = () => Date.now(), maxClockSkewMs = DEFAULT_MAX_CLOCK_SKEW_MS } = {}) {
+  constructor({ keyRing, clock = () => Date.now(), maxClockSkewMs = DEFAULT_MAX_CLOCK_SKEW_MS, trustedIdentities = [], requireTrustedIdentity = false, maxSeenNonces = DEFAULT_MAX_SEEN_NONCES } = {}) {
     if (!keyRing || typeof keyRing.secretFor !== 'function') throw new TypeError('keyRing must expose secretFor()');
     this.#keyRing = keyRing;
+    if (!Number.isInteger(maxSeenNonces) || maxSeenNonces <= 0) throw new TypeError('maxSeenNonces must be a positive integer');
     this.#clock = clock;
     this.#maxClockSkewMs = maxClockSkewMs;
+    this.#requireTrustedIdentity = requireTrustedIdentity;
+    this.#maxSeenNonces = maxSeenNonces;
+    for (const identity of trustedIdentities) this.registerIdentity(identity);
   }
 
   registerIdentity(identity) {
-    this.#identities.set(identity.principalId, identity);
+    const validation = validateIdentity(identity, { now: identity?.issuedAt ?? Date.now(), maxClockSkewMs: Number.MAX_SAFE_INTEGER });
+    if (!validation.ok) throw Object.assign(new Error(validation.code), { code: validation.code });
+    this.#identities.set(identity.principalId, structuredClone(identity));
     return identity;
   }
 
@@ -99,11 +109,18 @@ export class RemoteAuthenticationSession {
     if (!identityError.ok) return identityError;
     const secret = this.#keyRing.secretFor(identity.keyId);
     if (!secret) return { ok: false, code: 'UNKNOWN_KEY' };
+    if (this.#requireTrustedIdentity) {
+      const trusted = this.#identities.get(identity.principalId);
+      if (!trusted || !sameIdentity(trusted, identity)) return { ok: false, code: 'UNTRUSTED_IDENTITY', retryable: false };
+    }
+    if (typeof nonce !== 'string' || !nonce.trim()) return { ok: false, code: 'INVALID_NONCE', retryable: false };
     if (this.#seenNonces.has(nonce)) return { ok: false, code: 'REPLAY_NONCE', retryable: false };
     const signatureResult = verifyRemoteEnvelope({ identity, envelope, signature, secret });
     if (!signatureResult.ok) return signatureResult;
     this.#seenNonces.add(nonce);
-    this.#identities.set(identity.principalId, identity);
+    this.#nonceOrder.push(nonce);
+    while (this.#nonceOrder.length > this.#maxSeenNonces) this.#seenNonces.delete(this.#nonceOrder.shift());
+    if (!this.#identities.has(identity.principalId)) this.#identities.set(identity.principalId, structuredClone(identity));
     return { ok: true, code: 'AUTHENTICATED', principalId: identity.principalId, role: identity.role, keyId: identity.keyId, nonce };
   }
 
@@ -143,4 +160,12 @@ function sortValue(value) {
   if (Array.isArray(value)) return value.map(sortValue);
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortValue(value[key])]));
+}
+
+
+function sameIdentity(left, right) {
+  return left.schemaVersion === right.schemaVersion && left.authVersion === right.authVersion &&
+    left.principalId === right.principalId && left.role === right.role &&
+    left.instanceId === right.instanceId && left.issuedAt === right.issuedAt &&
+    left.expiresAt === right.expiresAt && left.keyId === right.keyId;
 }

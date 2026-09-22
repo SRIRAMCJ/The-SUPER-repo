@@ -81,7 +81,12 @@ export class VerticalMissionEngine {
       return Object.freeze({ ...record, recovery: { status: 'available', resumable: true, reason: 'Call recover(id, { resume: true }) to resume unfinished task-graph work.' } });
     }
 
-    const current = await this.missionStore.save({ ...record, status: 'recovering', recovery: { status: 'started', resumable: true } }, record.version);
+    const recoveryOwner = options.owner ?? this.idFactory(record.missionId + ':recovery');
+    let leaseRecord = record;
+    if (typeof this.missionStore.claimRecovery === 'function') {
+      leaseRecord = await this.missionStore.claimRecovery(record.missionExecutionId, recoveryOwner, options.leaseMs ?? 30000);
+    }
+    const current = await this.missionStore.save({ ...leaseRecord, status: 'recovering', recovery: { status: 'started', resumable: true, owner: recoveryOwner } }, leaseRecord.version);
     this.#emit('mission.recovery.started', current);
     let execution;
     try {
@@ -93,20 +98,29 @@ export class VerticalMissionEngine {
       if (isRetryableExecution(execution)) {
         const retryable = await this.missionStore.save({ ...current, status: 'executing', result: structuredClone(execution), recovery: { status: 'available', resumable: true, reason: 'Recovered execution failed transiently; retry recovery after the underlying task state is safe.' } }, current.version);
         this.#emit('mission.recovery.available', retryable);
+        if (typeof this.missionStore.releaseRecovery === 'function') await this.missionStore.releaseRecovery(record.missionExecutionId, recoveryOwner);
         return retryable;
       }
-      return this.#finish(current, 'failed', execution, null, [], { recovered: true });
+      const failed = await this.#finish(current, 'failed', execution, null, [], { recovered: true });
+      if (typeof this.missionStore.releaseRecovery === 'function') await this.missionStore.releaseRecovery(record.missionExecutionId, recoveryOwner);
+      return failed;
     }
 
     const verifying = await this.#transition(current, 'verifying');
     const verification = this.verifier
       ? await this.verifier.verify({ capability: { id: record.missionId, kind: 'mission' }, input: record.input, output: execution, context: { ...record.context, missionExecutionId: record.missionExecutionId, recovered: true } })
       : { verified: true, checks: 0, failures: [] };
-    if (!verification.verified) return this.#finish(verifying, 'rejected', execution, verification, [], { recovered: true });
+    if (!verification.verified) {
+      const rejected = await this.#finish(verifying, 'rejected', execution, verification, [], { recovered: true });
+      if (typeof this.missionStore.releaseRecovery === 'function') await this.missionStore.releaseRecovery(record.missionExecutionId, recoveryOwner);
+      return rejected;
+    }
     const artifacts = this.artifactStore
       ? await this.artifactStore.save({ mission: { id: record.missionId, kind: 'mission' }, input: record.input, output: execution, missionExecutionId: record.missionExecutionId, recovered: true })
       : [];
-    return this.#finish(verifying, 'succeeded', execution, verification, artifacts, { recovered: true });
+    const succeeded = await this.#finish(verifying, 'succeeded', execution, verification, artifacts, { recovered: true });
+    if (typeof this.missionStore.releaseRecovery === 'function') await this.missionStore.releaseRecovery(record.missionExecutionId, recoveryOwner);
+    return succeeded;
   }
 
   async get(missionExecutionId) { return this.missionStore.get(missionExecutionId); }

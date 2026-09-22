@@ -13,3 +13,6 @@ Fault injection is an explicit test/chaos primitive and must be enabled delibera
 
 ## Scope
 This does not claim automatic recovery of arbitrary external side effects. Durable state, idempotent effects, fencing, and downstream transaction semantics remain required.
+
+## Execution semantics
+Registered faults are executable through `withFaultInjection`: the `before` and `after` phases are evaluated automatically, while `during` faults are evaluated at explicit `checkpoint('during')` calls supplied to the operation. Faults may use the built-in `throw` behavior, an Error instance, or a synchronous/asynchronous fault function.\n\nFault triggering remains bounded by scenario limits and is deterministic when callers inject a random source into `FaultInjectionEngine.evaluate`. Context fingerprints use recursive canonical key ordering so equivalent nested objects hash consistently.\n

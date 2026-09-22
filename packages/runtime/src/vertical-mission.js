@@ -84,13 +84,13 @@ export class VerticalMissionEngine {
       artifacts: record.artifacts.map(a => ({ type: a.type, missionId: a.missionId, planId: a.planId, executionId: a.executionId })),
       error: error ? clone(error) : null
     });
-    this.#store(record);
+    await this.#persist(record);
     this.#emit({ type: status === 'succeeded' ? 'mission.vertical.completed' : 'mission.vertical.failed', missionId: record.missionId, status, data: clone(record.report), error: error ?? undefined });
     return clone(record);
   }
 
   #store(record) { this.missions.set(record.missionId, structuredClone(record)); }
-  async #persist(record) { this.#store(record); if (this.missionStore) await this.missionStore.save(record, record.version ?? null); }
+  async #persist(record) { this.#store(record); if (this.missionStore) { const saved = await this.missionStore.save(record, record.version ?? null); record.version = saved.version; record.updatedAt = saved.updatedAt; this.#store(record); } }
   async recover(missionId) { if (!this.missionStore) return this.getMission(missionId); const record = await this.missionStore.get(missionId); if (record) this.#store(record); return clone(record); }
   #emit(event) { this.events?.emit({ schemaVersion: SCHEMA_VERSION, timestamp: this.clock().toISOString(), ...event }); }
 }

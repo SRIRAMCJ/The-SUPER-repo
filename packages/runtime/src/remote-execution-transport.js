@@ -55,9 +55,20 @@ export class InMemoryRemoteExecutionTransport {
     return this.#workerSnapshot(this.#workers.get(workerId));
   }
 
-  heartbeat(workerId, { capabilities } = {}) {
+  heartbeat(workerId, { capabilities, identity = null, authentication = null, requestId = `heartbeat-${workerId}-${this.#clock()}` } = {}) {
     const worker = this.#workers.get(workerId);
     if (!worker) throw Object.assign(new Error(`Worker not found: ${workerId}`), { code: 'WORKER_NOT_FOUND' });
+    if (this.#authSession) {
+      if (!identity || identity.principalId !== workerId || identity.role !== 'worker') throw Object.assign(new Error('Worker identity does not match heartbeat'), { code: 'INVALID_WORKER_IDENTITY' });
+      const envelope = createProtocolEnvelope({ requestId, method: 'heartbeat', payload: { workerId, capabilities }, timestamp: this.#clock() });
+      const protocolSession = this.#protocolSessions.get(workerId);
+      const protocolAcceptance = protocolSession?.accept(envelope);
+      if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
+      const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce });
+      if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
+      const authorization = this.#authSession.authorize({ identity, method: envelope.method });
+      if (!authorization.ok) throw Object.assign(new Error(authorization.code), { code: authorization.code });
+    }
     worker.lastHeartbeatAt = this.#clock();
     if (capabilities !== undefined) {
       if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== 'string' || !value.trim())) throw new TypeError('capabilities must be an array of non-empty strings');
@@ -99,14 +110,14 @@ export class InMemoryRemoteExecutionTransport {
       requestId: request.requestId ?? `req-${request.executionId}-${this.#nextId + 1}`,
       method: 'execute',
       executionId: request.executionId,
-      payload: request,
+      payload: stripAuthentication(request),
       timestamp: this.#clock(),
       deadlineAt: request.deadlineAt ?? null,
       traceId: request.traceId ?? null,
     });
+    if (this.#authSession) this.#authenticateControllerRequest(request.authentication, envelope);
     const protocolAcceptance = session?.accept(envelope);
     if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
-    if (this.#authSession) this.#authenticateControllerRequest(request.authentication, envelope);
     const ownership = this.#ensureLease(request.executionId, worker.workerId, leaseId, fencingToken);
     if (!ownership.ok) throw Object.assign(new Error(ownership.error.message), { code: ownership.error.code, retryable: true });
 
@@ -269,6 +280,11 @@ export class InMemoryRemoteExecutionTransport {
       lastHeartbeatAt: worker.lastHeartbeatAt,
     };
   }
+}
+
+function stripAuthentication(request) {
+  const { authentication: _authentication, ...payload } = request ?? {};
+  return payload;
 }
 
 function normalizeWorkerResult(result) {

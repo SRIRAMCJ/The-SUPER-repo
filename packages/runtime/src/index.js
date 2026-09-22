@@ -78,3 +78,5 @@ export { RemoteWorkerIdentityRegistry, REMOTE_WORKER_IDENTITY_SCHEMA_VERSION } f
 export { RemoteRecoveryCoordinator, REMOTE_RECOVERY_COORDINATOR_SCHEMA_VERSION } from './remote-recovery-coordinator.js';
 
 export { RemoteAuthKeyRing, RemoteAuthenticationSession, createRemoteIdentity, createSignedEnvelope, signRemoteEnvelope, verifyRemoteEnvelope, validateIdentity, canonicalize, REMOTE_EXECUTION_AUTH_SCHEMA_VERSION, REMOTE_EXECUTION_AUTH_VERSION } from './remote-execution-auth.js';
+
+export { CAPABILITY_ATTESTATION_SCHEMA_VERSION, CAPABILITY_ATTESTATION_ALGORITHM, canonicalizeCapabilities, canonicalizeProtocolVersions, capabilityFingerprint, createCapabilityAttestation, signCapabilityAttestation, verifyCapabilityAttestation, validateCapabilityAttestation } from './remote-capability-attestation.js';

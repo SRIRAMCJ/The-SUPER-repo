@@ -50,7 +50,14 @@ export class VerticalMissionEngine {
     } catch (error) {
       execution = { status: 'failed', error: normalizeError(error), executionId: missionExecutionId };
     }
-    if (execution.status !== 'succeeded') {\n      if (execution.error?.retryable) {\n        const interrupted = await this.missionStore.save({ ...record, status: 'executing', result: structuredClone(execution), recovery: { status: 'available', resumable: true, reason: 'Task graph failed with a retryable error; unfinished work can be resumed.' } }, record.version);\n        this.#emit('mission.recovery.available', interrupted);\n        return interrupted;\n      }\n      return this.#finish(record, 'failed', execution, null);\n    }
+    if (execution.status !== 'succeeded') {
+      if (execution.error?.retryable) {
+        const interrupted = await this.missionStore.save({ ...record, status: 'executing', result: structuredClone(execution), recovery: { status: 'available', resumable: true, reason: 'Task graph failed with a retryable error; unfinished work can be resumed.' } }, record.version);
+        this.#emit('mission.recovery.available', interrupted);
+        return interrupted;
+      }
+      return this.#finish(record, 'failed', execution, null);
+    }
 
     record = await this.#transition(record, 'verifying');
     const verification = this.verifier

@@ -18,7 +18,7 @@ export class InMemoryRemoteExecutionTransport {
   #supportedProtocolVersions;
   #authSession;
 
-  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null, supportedProtocolVersions = [REMOTE_EXECUTION_PROTOCOL_VERSION], authKeyRing = null, authMaxClockSkewMs = undefined } = {}) {
+  constructor({ clock = () => Date.now(), leaseTtlMs = 30_000, workerRegistry = null, leaseManager = null, supportedProtocolVersions = [REMOTE_EXECUTION_PROTOCOL_VERSION], authKeyRing = null, authMaxClockSkewMs = undefined, authTrustedIdentities = [] } = {}) {
     if (!Number.isFinite(leaseTtlMs) || leaseTtlMs <= 0) throw new TypeError('leaseTtlMs must be positive');
     if (workerRegistry && typeof workerRegistry.resolveCapability !== 'function') throw new TypeError('workerRegistry must expose resolveCapability()');
     if (leaseManager && (typeof leaseManager.acquire !== 'function' || typeof leaseManager.validate !== 'function')) throw new TypeError('leaseManager must expose acquire() and validate()');
@@ -28,7 +28,7 @@ export class InMemoryRemoteExecutionTransport {
     if (!Array.isArray(supportedProtocolVersions) || supportedProtocolVersions.length === 0) throw new TypeError('supportedProtocolVersions must be non-empty');
     this.#leaseManager = leaseManager;
     this.#supportedProtocolVersions = [...new Set(supportedProtocolVersions)];
-    this.#authSession = authKeyRing ? new RemoteAuthenticationSession({ keyRing: authKeyRing, clock: this.#clock, ...(authMaxClockSkewMs !== undefined ? { maxClockSkewMs: authMaxClockSkewMs } : {}) }) : null;
+    this.#authSession = authKeyRing ? new RemoteAuthenticationSession({ keyRing: authKeyRing, clock: this.#clock, trustedIdentities: authTrustedIdentities, requireTrustedIdentity: true, ...(authMaxClockSkewMs !== undefined ? { maxClockSkewMs: authMaxClockSkewMs } : {}) }) : null;
   }
 
   registerWorker({ workerId, execute, capabilities = [], protocolVersions = this.#supportedProtocolVersions, identity = null, authentication = null } = {}) {
@@ -36,14 +36,17 @@ export class InMemoryRemoteExecutionTransport {
     if (typeof execute !== 'function') throw new TypeError('worker execute handler is required');
     if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== 'string' || !value.trim())) throw new TypeError('capabilities must be an array of non-empty strings');
     if (this.#workers.has(workerId)) throw Object.assign(new Error(`Worker already registered: ${workerId}`), { code: 'WORKER_ALREADY_REGISTERED' });
+    const session = new RemoteProtocolSession({ supportedVersions: this.#supportedProtocolVersions, clock: this.#clock });
+    const negotiation = session.negotiate(protocolVersions);
+    if (negotiation.state !== 'negotiated') throw Object.assign(new Error('No compatible remote protocol version'), { code: negotiation.code });
+    if (this.#authSession) {
+      this.#authenticateWorkerRegistration({ workerId, identity, authentication, protocolVersion: negotiation.protocolVersion, capabilities });
+      this.#authSession.registerIdentity(identity);
+    }
     if (this.#registry) {
       const registration = this.#registry.register({ workerId, capabilities });
       if (registration.state === 'conflict') throw Object.assign(new Error(`Worker already registered: ${workerId}`), { code: 'WORKER_ALREADY_REGISTERED' });
     }
-    const session = new RemoteProtocolSession({ supportedVersions: this.#supportedProtocolVersions, clock: this.#clock });
-    const negotiation = session.negotiate(protocolVersions);
-    if (negotiation.state !== 'negotiated') throw Object.assign(new Error('No compatible remote protocol version'), { code: negotiation.code });
-    if (this.#authSession) this.#authenticateWorkerRegistration({ workerId, identity, authentication, protocolVersion: negotiation.protocolVersion, capabilities });
     this.#protocolSessions.set(workerId, session);
     this.#workers.set(workerId, {
       workerId,
@@ -62,12 +65,14 @@ export class InMemoryRemoteExecutionTransport {
       if (!identity || identity.principalId !== workerId || identity.role !== 'worker') throw Object.assign(new Error('Worker identity does not match heartbeat'), { code: 'INVALID_WORKER_IDENTITY' });
       const envelope = createProtocolEnvelope({ requestId, method: 'heartbeat', payload: { workerId, capabilities }, timestamp: this.#clock() });
       const protocolSession = this.#protocolSessions.get(workerId);
-      const protocolAcceptance = protocolSession?.accept(envelope);
-      if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
+      const protocolValidation = protocolSession?.validate(envelope);
+      if (protocolValidation && !protocolValidation.ok) throw Object.assign(new Error(protocolValidation.code), { code: protocolValidation.code, retryable: protocolValidation.retryable });
       const result = this.#authSession.authenticate({ identity, envelope, signature: authentication?.signature, nonce: authentication?.nonce });
       if (!result.ok) throw Object.assign(new Error(result.code), { code: result.code, retryable: result.retryable === true });
       const authorization = this.#authSession.authorize({ identity, method: envelope.method });
       if (!authorization.ok) throw Object.assign(new Error(authorization.code), { code: authorization.code });
+      const protocolAcceptance = protocolSession?.accept(envelope);
+      if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });
     }
     worker.lastHeartbeatAt = this.#clock();
     if (capabilities !== undefined) {
@@ -115,6 +120,8 @@ export class InMemoryRemoteExecutionTransport {
       deadlineAt: request.deadlineAt ?? null,
       traceId: request.traceId ?? null,
     });
+    const protocolValidation = session?.validate(envelope);
+    if (protocolValidation && !protocolValidation.ok) throw Object.assign(new Error(protocolValidation.code), { code: protocolValidation.code, retryable: protocolValidation.retryable });
     if (this.#authSession) this.#authenticateControllerRequest(request.authentication, envelope);
     const protocolAcceptance = session?.accept(envelope);
     if (protocolAcceptance && !protocolAcceptance.ok) throw Object.assign(new Error(protocolAcceptance.code), { code: protocolAcceptance.code, retryable: protocolAcceptance.retryable });

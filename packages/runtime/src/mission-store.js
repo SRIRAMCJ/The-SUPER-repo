@@ -17,7 +17,8 @@ export class FileMissionStore {
   async save(record, expectedVersion = null) {
     await this.#load();
     validateRecord(record);
-    const current = this.records.get(record.missionId);
+    const key = record.missionExecutionId ?? record.missionId;
+    const current = this.records.get(key);
     if (expectedVersion !== null && (!current || current.version !== expectedVersion)) {
       throw conflict(record.missionId, expectedVersion, current?.version ?? null);
     }
@@ -27,12 +28,15 @@ export class FileMissionStore {
       version: (current?.version ?? -1) + 1,
       updatedAt: new Date().toISOString()
     };
-    this.records.set(next.missionId, Object.freeze(structuredClone(next)));
+    this.records.set(key, Object.freeze(structuredClone(next)));
     await this.#persist();
     return structuredClone(next);
   }
 
-  async get(missionId) { await this.#load(); return clone(this.records.get(missionId) ?? null); }
+  async get(missionId) {
+    await this.#load();
+    return clone(this.records.get(missionId) ?? [...this.records.values()].find((record) => record.missionId === missionId || record.missionExecutionId === missionId) ?? null);
+  }
 
   async list(filter = {}) {
     await this.#load();
@@ -48,7 +52,8 @@ export class FileMissionStore {
       for (const record of parsed) {
         validateRecord(record);
         if (!Number.isInteger(record.version) || record.version < 0) throw new TypeError('Invalid mission record version');
-        this.records.set(record.missionId, Object.freeze(structuredClone(record)));
+        const key = record.missionExecutionId ?? record.missionId;
+        this.records.set(key, Object.freeze(structuredClone(record)));
       }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
@@ -69,6 +74,7 @@ export class FileMissionStore {
 
 function validateRecord(record) {
   if (!record || typeof record !== 'object' || typeof record.missionId !== 'string' || !record.missionId) throw new TypeError('Mission record requires missionId');
+  if (record.missionExecutionId !== undefined && (typeof record.missionExecutionId !== 'string' || !record.missionExecutionId)) throw new TypeError('Mission record missionExecutionId must be a non-empty string');
 }
 function conflict(missionId, expectedVersion, actualVersion) {
   return Object.assign(new Error('Mission state version conflict: ' + missionId), { code: 'MISSION_STATE_CONFLICT', retryable: true, expectedVersion, actualVersion });

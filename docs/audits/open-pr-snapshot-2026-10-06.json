@@ -1,0 +1,282 @@
+[
+  {
+    "number": 108,
+    "title": "test(runtime): enforce durable recovery invariants",
+    "base": "feat/runtime-crash-safe-persistence",
+    "head": "feat/runtime-durability-invariants",
+    "sha": "c9e907e6a96d7a42f9ce49667d15e4e0d007789c",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/108"
+  },
+  {
+    "number": 107,
+    "title": "fix(runtime): make durable persistence crash-safe",
+    "base": "feat/runtime-recovery-fencing",
+    "head": "feat/runtime-crash-safe-persistence",
+    "sha": "f96b9382491c5bbcffdbbc13deb924700d2b2984",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/107"
+  },
+  {
+    "number": 106,
+    "title": "feat(runtime): add durable recovery fencing",
+    "base": "main",
+    "head": "feat/runtime-recovery-fencing",
+    "sha": "7a8b6ffabf96ab2cd555009c88663db8cc7d84e9",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/106"
+  },
+  {
+    "number": 104,
+    "title": "chore(runtime): reconcile vertical mission chain with main",
+    "base": "main",
+    "head": "reconcile/vertical-mission-main",
+    "sha": "d019e32effa67d102d8dc49c1a37e091bfee575b",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/104"
+  },
+  {
+    "number": 103,
+    "title": "chore: consolidate verified runtime mission chain",
+    "base": "main",
+    "head": "integration/vertical-mission",
+    "sha": "72d79b041bcd58d3de956ac1ce29068c9b3c474d",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/103"
+  },
+  {
+    "number": 102,
+    "title": "feat(runtime): add durable mission recovery inspection",
+    "base": "main",
+    "head": "feat/runtime-mission-recovery",
+    "sha": "77f535b5fd7458030cdd3d72b9037427cae5bfb2",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/102"
+  },
+  {
+    "number": 99,
+    "title": "feat(runtime): add fault injection and recovery primitives",
+    "base": "feat/runtime-observability-v2",
+    "head": "feat/runtime-fault-injection-recovery",
+    "sha": "63eb370d0af7f9fc3e77d9874ce49615dea53dc1",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/99"
+  },
+  {
+    "number": 98,
+    "title": "feat(runtime): add durable observability pipeline",
+    "base": "feat/runtime-distributed-coordination",
+    "head": "feat/runtime-observability-v2",
+    "sha": "614d11aba6ffbbebcb4af49b24dc89fafb556028",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/98"
+  },
+  {
+    "number": 97,
+    "title": "feat(runtime): add distributed coordination kernel",
+    "base": "feat/runtime-distributed-idempotent-effects",
+    "head": "feat/runtime-distributed-coordination",
+    "sha": "e971f21d056ab023a1b31addd2e0b8a98a8bf93e",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/97"
+  },
+  {
+    "number": 96,
+    "title": "feat(runtime): add distributed idempotent effect ledger",
+    "base": "feat/runtime-durable-execution-state-machine",
+    "head": "feat/runtime-distributed-idempotent-effects",
+    "sha": "606f8d141ccc3be2ab54919d171179baf7f44447",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/96"
+  },
+  {
+    "number": 95,
+    "title": "feat(runtime): add durable execution state machine",
+    "base": "feat/runtime-capability-attestation",
+    "head": "feat/runtime-durable-execution-state-machine",
+    "sha": "0cec34d036087b0a3e4528bb71c18b9b373bac68",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/95"
+  },
+  {
+    "number": 94,
+    "title": "feat(runtime): add remote capability attestation",
+    "base": "feat/runtime-remote-identity-auth",
+    "head": "feat/runtime-capability-attestation",
+    "sha": "1986f440826b33d76957d449bf447631e930af21",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/94"
+  },
+  {
+    "number": 93,
+    "title": "feat(runtime): add remote identity and authentication",
+    "base": "feat/runtime-remote-protocol-transport",
+    "head": "feat/runtime-remote-identity-auth",
+    "sha": "93a7a736b3fb932debca42aed7f8a1c1f17250ed",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/93"
+  },
+  {
+    "number": 92,
+    "title": "feat(runtime): add remote protocol and transport contract",
+    "base": "feat/runtime-remote-durability-hardening",
+    "head": "feat/runtime-remote-protocol-transport",
+    "sha": "4521d3fb828ae3bfd34d56851b6df9aa3b2927ae",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/92"
+  },
+  {
+    "number": 91,
+    "title": "feat(runtime): harden remote execution durability and recovery",
+    "base": "feat/runtime-remote-manifest-bound-execution",
+    "head": "feat/runtime-remote-durability-hardening",
+    "sha": "55990faf8c633ecd295a66c26fa70b644ebc9bcd",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/91"
+  },
+  {
+    "number": 69,
+    "title": "feat(runtime): bind checkpoints to verified event-range integrity",
+    "base": "feat/runtime-durable-range-integrity",
+    "head": "feat/runtime-checkpoint-integrity-binding",
+    "sha": "105a2ae357a8eb5ed0e0c23d09f60e9455d55ff9",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/69"
+  },
+  {
+    "number": 68,
+    "title": "feat(runtime): derive integrity from durable event ranges",
+    "base": "feat/runtime-integrity-convergence",
+    "head": "feat/runtime-durable-range-integrity",
+    "sha": "3a220a9fa2f49f5d9c7323a5fba60bf2b33b9fcc",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/68"
+  },
+  {
+    "number": 67,
+    "title": "feat(runtime): make observability convergence integrity-aware",
+    "base": "feat/runtime-observability-integrity",
+    "head": "feat/runtime-integrity-convergence",
+    "sha": "ad5deba272ab12f2f2f62609eeebe2b242cb549c",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/67"
+  },
+  {
+    "number": 66,
+    "title": "feat(runtime): harden observability integrity and checkpoint CAS",
+    "base": "feat/runtime-observability-convergence",
+    "head": "feat/runtime-observability-integrity",
+    "sha": "f1588bc657f9dff869bd32fbb06248801bf5fb89",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/66"
+  },
+  {
+    "number": 65,
+    "title": "feat(runtime): add observability convergence kernel",
+    "base": "feat/runtime-observability-gap-repair",
+    "head": "feat/runtime-observability-convergence",
+    "sha": "cc47d3794f4d25c5c236d0c1dd2444ad873c34f7",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/65"
+  },
+  {
+    "number": 64,
+    "title": "feat(runtime): add observability gap repair",
+    "base": "feat/runtime-checkpoint-aware-sync",
+    "head": "feat/runtime-observability-gap-repair",
+    "sha": "6a4f86b69325ffac2ca7853ef75669b3ad8ea88a",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/64"
+  },
+  {
+    "number": 63,
+    "title": "feat(runtime): add checkpoint-aware observability sync",
+    "base": "feat/runtime-durable-observability-checkpoints",
+    "head": "feat/runtime-checkpoint-aware-sync",
+    "sha": "d410dd51a01bb8b864675fc8191fce949168bebc",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/63"
+  },
+  {
+    "number": 62,
+    "title": "feat(runtime): make observability checkpoints durable",
+    "base": "feat/runtime-observability-checkpoints",
+    "head": "feat/runtime-durable-observability-checkpoints",
+    "sha": "f4f52b1a5bee8466d7993a8be4bce66f45cd0ed8",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/62"
+  },
+  {
+    "number": 61,
+    "title": "feat(runtime): add observability checkpoint authority",
+    "base": "feat/runtime-observability-sync",
+    "head": "feat/runtime-observability-checkpoints",
+    "sha": "6a8d996d8cac442bc8d315be3de3ce39e4508b54",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/61"
+  },
+  {
+    "number": 60,
+    "title": "feat(runtime): observability synchronization coordinator",
+    "base": "feat/runtime-durable-event-log",
+    "head": "feat/runtime-observability-sync",
+    "sha": "5b88b3eb3da70b7be2a9097abf6b31243e4ac335",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/60"
+  },
+  {
+    "number": 59,
+    "title": "feat(runtime): durable distributed observability event log",
+    "base": "feat/runtime-distributed-observability",
+    "head": "feat/runtime-durable-event-log",
+    "sha": "4114d3481183f59ddc64ddc78fd2d4cf779f3b80",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/59"
+  },
+  {
+    "number": 58,
+    "title": "feat(runtime): distributed observability event transport",
+    "base": "feat/runtime-atomic-idempotency",
+    "head": "feat/runtime-distributed-observability",
+    "sha": "abba6cb767028e5123fdabba3a48abb2bc9bbe51",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/58"
+  },
+  {
+    "number": 57,
+    "title": "feat(runtime): atomic durable idempotency single-flight",
+    "base": "feat/runtime-durable-idempotency",
+    "head": "feat/runtime-atomic-idempotency",
+    "sha": "1a404e37f69e8dcc0767ccc9970450d2db8dc470",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/57"
+  },
+  {
+    "number": 56,
+    "title": "feat(runtime): add durable idempotency persistence",
+    "base": "feat/runtime-trusted-proxy-admission",
+    "head": "feat/runtime-durable-idempotency",
+    "sha": "dbdb1370e11bf8a1164818f94a2050810f9855ed",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/56"
+  },
+  {
+    "number": 55,
+    "title": "feat(runtime): harden production request identity and shared rate limiting",
+    "base": "feat/runtime-production-admission",
+    "head": "feat/runtime-trusted-proxy-admission",
+    "sha": "f4d4e57d6b90e50a0068168164373b6b947deab2",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/55"
+  },
+  {
+    "number": 54,
+    "title": "feat(runtime): add production request admission boundary",
+    "base": "main",
+    "head": "feat/runtime-production-admission",
+    "sha": "bdf10a003a093ff65a6fa3d86b0a13981a59f895",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/54"
+  },
+  {
+    "number": 53,
+    "title": "feat(runtime): add automatic recovery failover orchestration",
+    "base": "feat/operations-runtime-kernel",
+    "head": "feat/automatic-recovery-failover",
+    "sha": "860432c63a0136c4fa0e705ba3bccc8eb36a3b0a",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/53"
+  },
+  {
+    "number": 52,
+    "title": "feat(runtime): advance operations, resource and readiness kernels",
+    "base": "main",
+    "head": "feat/operations-runtime-kernel",
+    "sha": "afda509bffaec68cf7e62b9655abf161093388bf",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/52"
+  },
+  {
+    "number": 51,
+    "title": "feat(runtime): add distributed capability gate",
+    "base": "main",
+    "head": "feat/distributed-capability-gate",
+    "sha": "a0f5661e4eedf306769cda3094166e824741ca92",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/51"
+  },
+  {
+    "number": 50,
+    "title": "feat(runtime): add security capability gate",
+    "base": "main",
+    "head": "feat/security-capability-gate",
+    "sha": "489b15c32e347a6352889db5349079e4f4c6274c",
+    "url": "https://github.com/SRIRAMCJ/The-SUPER-repo/pull/50"
+  }
+]

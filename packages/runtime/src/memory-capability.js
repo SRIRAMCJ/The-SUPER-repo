@@ -86,12 +86,13 @@ export class MemoryCapability {
 
   restore(snapshot) {
     if (!snapshot || snapshot.schemaVersion !== SCHEMA_VERSION || !Array.isArray(snapshot.records)) throw new TypeError('Invalid memory snapshot');
-    this.records.clear();
+    const restored = new Map();
     for (const record of snapshot.records) {
       const identity = normalizeIdentity(record.namespace, record.key);
-      if (record.id !== identity.id || !Number.isInteger(record.version) || record.version < 1) throw new TypeError(`Invalid memory record: ${identity.id}`);
-      this.records.set(identity.id, Object.freeze(structuredClone(record)));
+      if (typeof record.id !== 'string' || !record.id || !Number.isInteger(record.version) || record.version < 1 || restored.has(identity.id) || (record.expiresAt !== null && !Number.isFinite(Date.parse(record.expiresAt)))) throw new TypeError(`Invalid memory record: ${identity.id}`);
+      restored.set(identity.id, Object.freeze(structuredClone(record)));
     }
+    this.records = restored;
     this.#purgeExpired();
     this.#evict();
     return this.snapshot();

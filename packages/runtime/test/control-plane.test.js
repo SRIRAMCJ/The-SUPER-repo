@@ -56,3 +56,13 @@ test('control plane snapshot unifies health, metrics, executions, evolution, tra
   assert.ok(Array.isArray(snapshot.traces));
   assert.ok(Array.isArray(snapshot.recentEvents));
 });
+
+test('expired and future failure events do not poison the current health window', () => {
+  const eventBus = new EventBus(); const observability = new ObservabilityEngine({ eventBus });
+  const clock = () => new Date('2026-10-06T12:00:00Z');
+  const controlPlane = new RuntimeControlPlane({ observability, clock });
+  eventBus.emit({ type: 'execution.failed', executionId: 'old', timestamp: '2026-10-05T12:00:00Z' });
+  eventBus.emit({ type: 'execution.failed', executionId: 'future', timestamp: '2026-10-07T12:00:00Z' });
+  assert.equal(controlPlane.getHealth().status, 'healthy');
+  assert.equal(controlPlane.getHealth().recentFailures, 0);
+});

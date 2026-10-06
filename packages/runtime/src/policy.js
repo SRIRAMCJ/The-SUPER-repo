@@ -2,7 +2,8 @@ const ALLOWED_RISKS = new Set(['none', 'low', 'medium', 'high', 'critical']);
 
 export class PolicyEngine {
   constructor({ policies = [] } = {}) {
-    this.policies = [...policies];
+    if (!Array.isArray(policies) || policies.some((policy) => typeof policy !== 'function')) throw new TypeError('policies must be an array of functions');
+    this.policies = Object.freeze([...policies]);
   }
 
   authorize(capability, context = {}) {
@@ -10,11 +11,16 @@ export class PolicyEngine {
     if (!ALLOWED_RISKS.has(risk)) throw new Error(`Invalid capability risk: ${risk}`);
 
     for (const policy of this.policies) {
-      if (typeof policy === 'function') {
-        const decision = policy(capability, context);
-        if (decision === false) return { allowed: false, reason: 'Denied by policy' };
-        if (typeof decision === 'object' && decision?.allowed === false) return decision;
+      let decision;
+      try { decision = policy(capability, context); }
+      catch { return { allowed: false, reason: 'Policy evaluation failed' }; }
+      if (decision && typeof decision.then === 'function') {
+        // This interface is synchronous. Observe rejected promises without granting access.
+        Promise.resolve(decision).catch(() => {});
+        return { allowed: false, reason: 'Asynchronous policies are not supported by authorize()' };
       }
+      if (decision === false || decision?.allowed === false) return { allowed: false, reason: decision?.reason ?? 'Denied by policy' };
+      if (decision !== true && decision?.allowed !== true) return { allowed: false, reason: 'Policy did not explicitly authorize execution' };
     }
 
     if (risk === 'critical' && context.approval !== true) {

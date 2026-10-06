@@ -32,6 +32,10 @@ export class ExecutionEngine {
       }
     }
 
+    if (context.signal?.aborted) {
+      const error = { code: 'EXECUTION_CANCELLED', message: 'Execution cancelled before dispatch', retryable: false };
+      return { executionId, capabilityId, status: 'failed', startedAt, finishedAt: this.clock().toISOString(), error };
+    }
     this.#emit({ type:'execution.started', executionId, capabilityId, status:'started', data:{ input, context } });
     const controller = new AbortController();
     const cancellation = this.cancellation.register(executionId, controller);
@@ -40,13 +44,16 @@ export class ExecutionEngine {
       const externalCancellation = externalSignalPromise(context.signal, controller, cancellationReason(context.signal));
       removeExternalAbort = externalCancellation.cleanup;
       const timeoutMs = Number.isFinite(manifest.timeoutSeconds) ? manifest.timeoutSeconds * 1000 : null;
-      const handlerPromise = Promise.resolve().then(() => handler(input, {
+      const handlerPromise = Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw controller.signal.reason ?? Object.assign(new Error('Execution cancelled'), { code: 'EXECUTION_CANCELLED' });
+        return handler(input, {
         executionId,
         capability: manifest,
         context,
         signal: controller.signal,
         emit: (data) => this.#emit({ type:'execution.progress', executionId, capabilityId, status:'progress', data })
-      }));
+        });
+      });
       const output = timeoutMs
         ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id, cancellation, externalCancellation.promise)
         : await Promise.race([handlerPromise, cancellation, externalCancellation.promise]);
@@ -79,7 +86,7 @@ function externalSignalPromise(signal, controller, reason) {
   let rejectSignal;
   const promise = new Promise((_, reject) => { rejectSignal = reject; });
   const abort = () => {
-    const error = reason ?? Object.assign(new Error('Execution cancelled by parent'), { code:'EXECUTION_CANCELLED', retryable:false });
+    const error = cancellationReason(signal) ?? reason ?? Object.assign(new Error('Execution cancelled by parent'), { code:'EXECUTION_CANCELLED', retryable:false });
     controller.abort(error);
     rejectSignal(error);
   };
@@ -90,7 +97,7 @@ function externalSignalPromise(signal, controller, reason) {
 
 function cancellationReason(signal) {
   if (!signal?.reason) return null;
-  return signal.reason?.code ? signal.reason : Object.assign(new Error(String(signal.reason)), { code:'EXECUTION_CANCELLED', retryable:false });
+  return typeof signal.reason?.code === 'string' ? signal.reason : Object.assign(new Error(String(signal.reason)), { code:'EXECUTION_CANCELLED', retryable:false });
 }
 
 async function withTimeout(promise, timeoutMs, controller, capabilityId, cancellation, externalCancellation) {

@@ -84,3 +84,28 @@ test('terminal missions cannot be resumed', async () => {
   assert.equal(recovered.status, 'succeeded');
   assert.equal(recovered.recovery.resumable, false);
 });
+
+test('a second engine cannot resume a mission while recovery is claimed', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'super-vertical-fence-'));
+  t.after(() => import('node:fs/promises').then(({ rm }) => rm(directory, { recursive: true, force: true })));
+  const file = path.join(directory, 'missions.json');
+  const first = await new FileMissionStore(file).init();
+  const second = await new FileMissionStore(file).init();
+  await first.save({ missionId: 'mission/fenced', missionExecutionId: 'exec/fenced', status: 'executing', plan: {}, context: {}, input: {} });
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const graph = { execute: async () => {}, resume: async () => { entered(); await pending; return { status: 'succeeded' }; } };
+  const createEngine = (store) => new VerticalMissionEngine({ taskDecomposer: new TaskDecomposer(), taskGraphExecutor: graph, missionStore: store });
+  const recovering = createEngine(first).recover('exec/fenced', { resume: true, owner: 'worker-a' });
+  await started;
+  try {
+    await assert.rejects(createEngine(second).recover('exec/fenced', { resume: true, owner: 'worker-b' }),
+      (error) => error.code === 'MISSION_RECOVERY_LEASE_HELD');
+  } finally { finish(); }
+  const completed = await recovering;
+  assert.equal(completed.status, 'succeeded');
+  assert.equal(completed.recoveryLease, null);
+  assert.equal((await second.get('exec/fenced')).status, 'succeeded');
+});

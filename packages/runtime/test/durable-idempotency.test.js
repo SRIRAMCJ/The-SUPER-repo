@@ -61,3 +61,66 @@ test('request guard returns 409 while a durable idempotency request is in flight
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('expired owners cannot complete a replacement claim and pending claims are never evicted', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'super-claim-fencing-'));
+  let now = 1000;
+  try {
+    const store = await new DurableIdempotencyStore({ filePath: join(dir, 'journal'), clock: () => now, ttlMs: 100, maxRecords: 1 }).init();
+    const old = await store.claim('request', 'same');
+    await assert.rejects(store.claim('other', 'other'), { code: 'IDEMPOTENCY_CAPACITY' });
+    assert.equal((await store.claim('request', 'same')).state, 'in_progress');
+    now = 1200;
+    const replacement = await store.claim('request', 'same');
+    assert.notEqual(old.record.claimToken, replacement.record.claimToken);
+    assert.equal(await store.completeClaim('request', 'same', old.record.claimToken, 'stale'), false);
+    assert.equal(await store.completeClaim('request', 'same', replacement.record.claimToken, 'fresh'), true);
+    await store.compact();
+    const reopened = await new DurableIdempotencyStore({ filePath: join(dir, 'journal'), clock: () => now }).init();
+    assert.equal((await reopened.claim('request', 'same')).record.response, 'fresh');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('claim ownership is atomic across separate Node processes', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const dir = await mkdtemp(join(tmpdir(), 'super-process-claims-'));
+  try {
+    const moduleUrl = new URL('../src/durable-idempotency.js', import.meta.url).href;
+    const script = `import { DurableIdempotencyStore } from ${JSON.stringify(moduleUrl)}; const store = await new DurableIdempotencyStore({filePath:process.argv[1]}).init(); console.log((await store.claim('key','fp')).state);`;
+    const output = await Promise.all([1, 2].map(() => run(process.execPath, ['--input-type=module', '-e', script, join(dir, 'journal')])));
+    assert.deepEqual(output.map((x) => x.stdout.trim()).sort(), ['claimed', 'in_progress']);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('lock timeout uses elapsed time even with a fixed application clock and never steals locks', async () => {
+  const { mkdir, stat } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'super-lock-timeout-'));
+  const filePath = join(dir, 'journal');
+  try {
+    await mkdir(filePath + '.lock');
+    const store = new DurableIdempotencyStore({ filePath, clock: () => 0, lockTimeoutMs: 20, lockRetryMs: 2 });
+    await assert.rejects(store.init(), { code: 'IDEMPOTENCY_LOCK_TIMEOUT' });
+    assert.equal((await stat(filePath + '.lock')).isDirectory(), true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('in-memory guard single-flights requests and distinguishes query strings', async () => {
+  const guard = new RuntimeRequestGuard();
+  const request = { method: 'POST', path: '/run?mode=a', clientKey: 'trusted-user', idempotencyKey: 'same', body: {} };
+  const owner = await guard.admit(request);
+  assert.equal((await guard.admit(request)).decision, 'in_progress');
+  assert.equal((await guard.admit({ ...request, path: '/run?mode=b' })).decision, 'accepted');
+  assert.equal(await guard.complete({ ...owner, claimToken: 'wrong' }, { status: 200 }), false);
+  assert.equal(await guard.complete(owner, { status: 200 }), true);
+  assert.equal((await guard.admit(request)).decision, 'replay');
+});
+
+test('untrusted client identity headers cannot change the host-provided principal', async () => {
+  const guard = new RuntimeRequestGuard();
+  const request = { method: 'POST', path: '/run', clientKey: 'trusted-user', idempotencyKey: 'same', body: {} };
+  const owner = await guard.admit({ ...request, headers: { 'x-client-id': 'victim' } });
+  await guard.complete(owner, { status: 200 });
+  assert.equal((await guard.admit({ ...request, headers: { 'x-client-id': 'someone-else' } })).decision, 'replay');
+});

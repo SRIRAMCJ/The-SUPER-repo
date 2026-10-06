@@ -11,11 +11,11 @@ export class CapabilityRegistry {
     }
     if (typeof handler !== 'function' && handler !== null) throw new TypeError(`Handler must be a function or null for ${manifest.id}`);
     if (this.#capabilities.has(manifest.id)) throw new Error(`Capability already registered: ${manifest.id}`);
-    this.#capabilities.set(manifest.id, { manifest: Object.freeze(structuredClone(manifest)), handler });
+    this.#capabilities.set(manifest.id, { manifest: structuredClone(manifest), handler });
     return manifest.id;
   }
 
-  resolve(id) { return this.#capabilities.get(id); }
+  resolve(id) { const entry = this.#capabilities.get(id); return entry ? Object.freeze({ manifest: structuredClone(entry.manifest), handler: entry.handler }) : undefined; }
 
   require(id) {
     const entry = this.resolve(id);
@@ -24,7 +24,7 @@ export class CapabilityRegistry {
     return entry;
   }
 
-  list(kind) { return [...this.#capabilities.values()].map(({ manifest }) => manifest).filter((item) => !kind || item.kind === kind); }
+  list(kind) { return [...this.#capabilities.values()].map(({ manifest }) => structuredClone(manifest)).filter((item) => !kind || item.kind === kind); }
 }
 
 export function validateCapability(value) {

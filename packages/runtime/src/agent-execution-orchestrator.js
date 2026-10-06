@@ -71,7 +71,7 @@ export class AgentExecutionOrchestrator {
       try {
         const recovered = await this.recovery.recover(toTaskPlan(plan), executionId, { ...context, executionId, correlationId }, { allowRunning: true });
         result = normalizeExecutionResult(recovered, executionId);
-        this.#transition(executionId, result.status === 'succeeded' ? 'running' : result.status === 'cancelled' ? 'cancelled' : 'failed', { recoveryAttempt: recoveryAttempts });
+        this.#transition(executionId, 'recovering', { recoveryAttempt: recoveryAttempts });
         this.#emit({ type: result.status === 'succeeded' ? 'agent.orchestration.recovery.completed' : 'agent.orchestration.recovery.failed', executionId, planId: plan.planId, status: result.status, data: { recoveryAttempt: recoveryAttempts, result } });
       } catch (error) {
         result = { status: 'failed', error: normalizeError(error) };
@@ -187,7 +187,7 @@ function normalizeExecutionResult(result, executionId) {
 }
 
 function isRetryable(result) {
-  return Boolean(result?.error?.retryable || result?.execution?.error?.retryable || result?.result?.error?.retryable);
+  return Boolean(result?.error?.retryable || result?.execution?.error?.retryable || result?.result?.error?.retryable || result?.result?.results?.some((task) => task.error?.retryable));
 }
 
 function normalizeError(error) {

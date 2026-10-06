@@ -48,3 +48,7 @@ export { TeamRuntime } from './team.js';
 export { TeamBuilder } from './team-builder.js';
 export { FileMissionStore, MISSION_STORE_SCHEMA_VERSION } from './mission-store.js';
 export { VerticalMissionEngine, VERTICAL_MISSION_SCHEMA_VERSION } from './vertical-mission.js';
+
+export { DurableIdempotencyStore } from './durable-idempotency.js';
+export { RuntimeRequestGuard } from './request-guard.js';
+export { RuntimeRequestIdentity } from './request-identity.js';

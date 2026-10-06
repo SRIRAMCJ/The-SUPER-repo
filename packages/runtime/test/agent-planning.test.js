@@ -67,3 +67,31 @@ test('rejects malformed planning requests with structured invalid decisions', ()
   assert.equal(plan.executionDecision.status, 'invalid');
   assert.equal(plan.executionDecision.reasons[0].code, 'GOAL_INVALID');
 });
+
+test('preserves ordered capability pipelines instead of sorting or dropping them', () => {
+  const registry = new CapabilityRegistry();
+  registry.register(manifest('agent.z'), () => {});
+  registry.register(manifest('agent.a'), () => {});
+  const tasks = [{ id: 'pipeline', title: 'Pipeline', capabilities: ['agent.z', 'agent.a'] }];
+  const plan = kernel(registry).plan({ goal: 'pipeline', tasks });
+  tasks[0].capabilities.reverse();
+  assert.deepEqual(plan.graph.tasks[0].capabilities, ['agent.z', 'agent.a']);
+  assert.deepEqual(plan.requiredCapabilities, ['agent.a', 'agent.z']);
+});
+
+test('blocks disabled capabilities and tasks without an executor', () => {
+  const registry = new CapabilityRegistry();
+  registry.register({ ...manifest('agent.disabled'), status: 'disabled' }, () => {});
+  const k = kernel(registry);
+  assert.equal(k.plan({ goal: 'run', tasks: [{ id: 'a', title: 'A', capabilities: ['agent.disabled'] }] }).executionDecision.status, 'blocked');
+  assert.equal(k.plan({ goal: 'run', tasks: [{ id: 'a', title: 'A' }] }).executionDecision.status, 'blocked');
+});
+
+test('malformed capabilities are rejected, never silently discarded', () => {
+  const registry = new CapabilityRegistry();
+  for (const capabilities of ['agent.a', [null], [' '], [123]]) {
+    const result = kernel(registry).plan({ goal: 'run', tasks: [{ id: 'a', title: 'A', capabilities }] });
+    assert.equal(result.executionDecision.status, 'invalid');
+    assert.equal(result.executionDecision.reasons[0].code, 'TASK_CAPABILITY_INVALID');
+  }
+});

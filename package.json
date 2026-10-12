@@ -2,7 +2,7 @@
   "name": "the-super-repo",
   "version": "0.1.0",
   "private": true,
-  "description": "SUPER \u2014 an executable, provider-agnostic AI operating system and agent runtime.",
+  "description": "SUPER — an executable, provider-agnostic AI operating system and agent runtime.",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -15,6 +15,11 @@
     "test:repository-analyst": "node --test packages/agents/repository-analyst/test/repository-analyst.test.js",
     "test:reverse-engineering": "node --test packages/tools/reverse-engineering/test/*.test.js",
     "test:cli": "node --test apps/cli/test/cli.test.js",
-    "test": "npm run test:core && npm run test:runtime && npm run test:repository-analyst && npm run test:reverse-engineering && npm run test:cli"
+    "test": "npm run test:core && npm run test:runtime && npm run test:repository-analyst && npm run test:reverse-engineering && npm run test:cli && npm run test:viewer",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:viewer": "npm --workspace @super/investigation-viewer test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

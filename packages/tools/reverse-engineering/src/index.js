@@ -7,6 +7,7 @@ const IGNORED = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.
 const SIGNALS = [
   ['module-import', /\b(?:import\s+(?:[^'";]*?\s+from\s+)?|require\s*\()\s*['"]([^'"\n]+)['"]/g],
   ['module-export', /\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let)\s+([\w$]+)/g],
+  ['typescript-declaration', /\bexport\s+(?:declare\s+)?(?:interface|type|enum|namespace)\s+([\w$]+)/g],
   ['route', /\b(?:app|router)\.(?:get|post|put|patch|delete)\s*\(\s*['"]([^'"\n]+)['"]/g],
   ['electron-ipc', /\b(?:ipcMain|ipcRenderer)\.(?:handle|on|send|invoke)\s*\(\s*['"]([^'"\n]+)['"]/g],
   ['electron-bridge', /\bcontextBridge\.exposeInMainWorld\s*\(\s*['"]([^'"\n]+)['"]/g]

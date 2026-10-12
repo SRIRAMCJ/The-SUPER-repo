@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { createRepositoryAnalystRuntime } from '../../../packages/agents/repository-analyst/src/index.js';
-import { investigateJavaScript } from '../../../packages/tools/reverse-engineering/src/index.js';
+import { createStaticInvestigationRuntime } from '../../../packages/tools/reverse-engineering/src/runtime.js';
 
 const args = process.argv.slice(2);
 
@@ -15,7 +15,10 @@ async function main() {
     const unknown = args.slice(2).filter((arg) => arg !== '--json' && !arg.startsWith('--query='));
     if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
     const query = args.find((arg) => arg.startsWith('--query='))?.slice('--query='.length);
-    const report = await investigateJavaScript(path.resolve(target), { query });
+    const runtime = createStaticInvestigationRuntime();
+    const result = await runtime.execution.execute(runtime.manifest.id, { targetPath: path.resolve(target), options: { query } });
+    if (result.status !== 'succeeded') throw new Error(`${result.error.code}: ${result.error.message}`);
+    const report = result.output;
     if (args.includes('--json')) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     else {
       console.log(`Investigated ${report.files.length} files; ${report.findings.length} evidence items; ${report.skipped.length} skipped`);

@@ -39,3 +39,15 @@ function runNode(args) {
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
 }
+
+test('CLI investigate emits evidence from a local JavaScript target', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'super-cli-re-'));
+  try {
+    await writeFile(path.join(root, 'app.js'), "app.get('/search', handler);\n");
+    const result = await runNode([cli, 'investigate', root, '--query=search', '--json']);
+    assert.equal(result.code, 0);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.type, 'static-javascript-investigation');
+    assert.equal(report.findings[0].evidence.line, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

@@ -32,7 +32,7 @@ test('policy denial occurs before filesystem access', async () => {
 
 test('verifier rejects fabricated file references and altered digests', () => {
   const runtime = createStaticInvestigationRuntime();
-  const output = { type: 'static-javascript-investigation', schemaVersion: '0.1.0', files: [{ path: 'a.js', sha256: 'a'.repeat(64) }], skipped: [], findings: [
+  const output = { type: 'static-javascript-investigation', schemaVersion: '0.1.0', files: [{ path: 'a.js', sha256: 'a'.repeat(64) }], skipped: [], limits: { filesConsidered: 1, fileLimitReached: false, findingsLimitReached: false }, findings: [
     { kind: 'route', value: '/x', evidence: { path: 'other.js', sha256: 'a'.repeat(64), line: 1, column: 1 } }
   ] };
   assert.equal(verifyInvestigation({ capability: runtime.manifest, output }).ok, false);

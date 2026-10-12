@@ -12,16 +12,19 @@ async function main() {
   if (command === 'investigate') {
     const target = args[1];
     if (!target || target.startsWith('--')) throw new Error('Usage: super investigate <path> [--query=text] [--json]');
-    const unknown = args.slice(2).filter((arg) => arg !== '--json' && !arg.startsWith('--query='));
+    const unknown = args.slice(2).filter((arg) => arg !== '--json' && !arg.startsWith('--query=') && !arg.startsWith('--max-files=') && !arg.startsWith('--max-findings='));
     if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
     const query = args.find((arg) => arg.startsWith('--query='))?.slice('--query='.length);
+    const maxFiles = parseOptionalLimit('--max-files=');
+    const maxFindings = parseOptionalLimit('--max-findings=');
     const runtime = createStaticInvestigationRuntime();
-    const result = await runtime.execution.execute(runtime.manifest.id, { targetPath: path.resolve(target), options: { query } });
+    const result = await runtime.execution.execute(runtime.manifest.id, { targetPath: path.resolve(target), options: { query, maxFiles, maxFindings } });
     if (result.status !== 'succeeded') throw new Error(`${result.error.code}: ${result.error.message}`);
     const report = result.output;
     if (args.includes('--json')) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     else {
       console.log(`Investigated ${report.files.length} files; ${report.findings.length} evidence items; ${report.skipped.length} skipped`);
+      if (report.limits.fileLimitReached || report.limits.findingsLimitReached) console.log('Inspection limit reached; results may be incomplete');
       for (const finding of report.findings) console.log(`${finding.evidence.path}:${finding.evidence.line}:${finding.evidence.column} [${finding.kind}] ${finding.value}`);
       for (const limit of report.limitations) console.log(`Limit: ${limit}`);
     }
@@ -46,6 +49,14 @@ async function main() {
     printHumanReport(result);
   }
   if (result.status !== 'succeeded') process.exitCode = 1;
+}
+
+function parseOptionalLimit(prefix) {
+  const raw = args.find((arg) => arg.startsWith(prefix));
+  if (!raw) return undefined;
+  const value = Number(raw.slice(prefix.length));
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${prefix.slice(0, -1)} must be a positive integer`);
+  return value;
 }
 
 function printHumanReport(result) {
@@ -73,7 +84,7 @@ function printHelp() {
   console.log('');
   console.log('Usage:');
   console.log('  super analyze [path] [--json] [--max-files=N]');
-  console.log('  super investigate <path> [--query=text] [--json]');
+  console.log('  super investigate <path> [--query=text] [--max-files=N] [--max-findings=N] [--json]');
 }
 
 main().catch((error) => {

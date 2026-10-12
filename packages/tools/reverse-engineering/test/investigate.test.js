@@ -43,6 +43,23 @@ test('never follows symlinks, excludes dependency trees and reports size limits'
 
 test('rejects invalid bounds and nonregular targets', () => fixture(async (root) => {
   await assert.rejects(investigateJavaScript(root, { maxFiles: 0 }), /maxFiles/);
+  await assert.rejects(investigateJavaScript(root, { maxFindings: 0 }), /maxFindings/);
   await symlink(root, path.join(root, 'linked'));
   await assert.rejects(investigateJavaScript(path.join(root, 'linked')), /regular file or directory/);
+}));
+
+test('bounds candidate files even when each is too large', () => fixture(async (root) => {
+  for (let i = 0; i < 5; i++) await writeFile(path.join(root, `${i}.js`), 'x'.repeat(100));
+  const report = await investigateJavaScript(root, { maxFiles: 2, maxBytes: 10 });
+  assert.equal(report.limits.filesConsidered, 2);
+  assert.equal(report.limits.fileLimitReached, true);
+  assert.equal(report.skipped.length, 2);
+}));
+
+test('caps findings and keeps query matching linear across many lines', () => fixture(async (root) => {
+  await writeFile(path.join(root, 'app.ts'), Array.from({ length: 2000 }, (_, i) => `router.get('/search/${i}', handler);`).join('\n'));
+  const report = await investigateJavaScript(root, { query: 'search', maxFindings: 3 });
+  assert.equal(report.findings.length, 3);
+  assert.equal(report.limits.findingsLimitReached, true);
+  assert.deepEqual(report.findings.map((item) => item.evidence.line), [1, 2, 3]);
 }));

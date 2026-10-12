@@ -15,7 +15,9 @@ export function createStaticInvestigationRuntime({ policies = [], clock } = {}) 
 export function verifyInvestigation({ capability, output }) {
   if (capability.id !== reverseEngineeringTool.id) return { ok: true };
   if (output?.type !== 'static-javascript-investigation' || output.schemaVersion !== '0.1.0' ||
-      !Array.isArray(output.files) || !Array.isArray(output.findings) || !Array.isArray(output.skipped)) {
+      !Array.isArray(output.files) || !Array.isArray(output.findings) || !Array.isArray(output.skipped) ||
+      !output.limits || !Number.isSafeInteger(output.limits.filesConsidered) ||
+      typeof output.limits.fileLimitReached !== 'boolean' || typeof output.limits.findingsLimitReached !== 'boolean') {
     return invalid('Investigation report shape is invalid');
   }
   const files = new Map();

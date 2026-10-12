@@ -80,3 +80,38 @@ test('rejects duplicate execution identifiers deterministically', async () => {
   assert.equal(first.status, 'succeeded'); assert.equal(second.error.code, 'MODEL_EXECUTION_ID_CONFLICT');
   assert.equal(kernel.getExecution('model-exec-001').status, 'succeeded');
 });
+
+test('reserves an identifier while policy and provider execution are pending', async () => {
+  let releasePolicy;
+  const policyGate = new Promise((resolve) => { releasePolicy = resolve; });
+  let calls = 0;
+  const { kernel } = setup({ id: 'provider-a', status: 'stable', async generate() { calls += 1; return { text: 'ok' }; } },
+    { policy: { async authorize() { await policyGate; return { allowed: true }; } } });
+  const first = kernel.generate({ provider: 'provider-a', model: 'model-a' });
+  const duplicate = await kernel.generate({ provider: 'provider-a', model: 'model-a' });
+  assert.equal(duplicate.error.code, 'MODEL_EXECUTION_ID_CONFLICT');
+  releasePolicy();
+  assert.equal((await first).status, 'succeeded');
+  assert.equal(calls, 1);
+});
+
+test('does not retry or reuse an ID while a timed-out provider ignores cancellation', async () => {
+  let finish;
+  let calls = 0;
+  const hung = new Promise((resolve) => { finish = resolve; });
+  const { kernel } = setup({ id: 'provider-a', status: 'stable', async generate({ model }) {
+    calls += 1;
+    return model === 'hung' ? hung : { text: 'ok' };
+  } }, { defaultTimeoutMs: 10, maxRetries: 1, maxExecutions: 1 });
+  const timedOut = await kernel.generate({ provider: 'provider-a', model: 'hung' }, { executionId: 'shared' });
+  assert.equal(timedOut.status, 'failed');
+  assert.equal(timedOut.error.code, 'MODEL_EXECUTION_TIMEOUT');
+  assert.equal(calls, 1);
+  assert.equal((await kernel.generate({ provider: 'provider-a', model: 'ok' }, { executionId: 'other' })).status, 'succeeded');
+  assert.equal(kernel.getExecution('shared'), null);
+  const duplicate = await kernel.generate({ provider: 'provider-a', model: 'ok' }, { executionId: 'shared' });
+  assert.equal(duplicate.error.code, 'MODEL_EXECUTION_ID_CONFLICT');
+  finish({ text: 'late' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await kernel.generate({ provider: 'provider-a', model: 'ok' }, { executionId: 'shared' })).status, 'succeeded');
+});

@@ -13,12 +13,18 @@ export class ModelProviderRegistry {
     if (this.#providers.has(provider.id)) {
       throw new Error(`Model provider already registered: ${provider.id}`);
     }
-    this.#providers.set(provider.id, provider);
-    return provider;
+    const { generate, ...metadata } = provider;
+    const snapshot = freezeDeep(structuredClone(metadata));
+    const entry = Object.freeze({ ...snapshot, generate: (request) => generate.call(snapshot, request) });
+    this.#providers.set(snapshot.id, entry);
+    return this.resolve(snapshot.id);
   }
 
   resolve(id) {
-    return this.#providers.get(id) ?? null;
+    const entry = this.#providers.get(id);
+    if (!entry) return null;
+    const { generate, ...metadata } = entry;
+    return { ...structuredClone(metadata), generate };
   }
 
   require(id) {
@@ -28,7 +34,7 @@ export class ModelProviderRegistry {
   }
 
   list() {
-    return [...this.#providers.values()];
+    return [...this.#providers.keys()].map((id) => this.resolve(id));
   }
 }
 
@@ -43,14 +49,22 @@ export class ModelRuntime {
     const provider = this.providers.require(request.provider);
     const startedAt = Date.now();
     const result = await provider.generate(request);
+    if (!result || typeof result !== 'object' || Array.isArray(result)) throw new TypeError('Model provider must return an object');
     return {
+      ...result,
       provider: provider.id,
       model: request.model,
       mode: request.mode ?? 'chat',
-      latencyMs: Date.now() - startedAt,
-      ...result
+      latencyMs: Date.now() - startedAt
     };
   }
+}
+
+function freezeDeep(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) freezeDeep(child, seen);
+  return Object.freeze(value);
 }
 
 function validateModelRequest(request) {

@@ -13,6 +13,8 @@ export async function writeAtomicJson(filePath, value) {
     await handle.sync();
     await handle.close(); handle = null;
     await rename(temporaryPath, filePath);
+    const directory = await open(path.dirname(filePath), 'r');
+    try { await directory.sync(); } finally { await directory.close(); }
   } finally {
     await handle?.close();
     await unlink(temporaryPath).catch((error) => { if (error.code !== 'ENOENT') throw error; });

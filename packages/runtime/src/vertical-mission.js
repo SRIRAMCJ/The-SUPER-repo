@@ -74,13 +74,32 @@ export class VerticalMissionEngine {
     const record = await this.missionStore.get(missionExecutionId);
     if (!record) return null;
     if (TERMINAL.has(record.status)) return Object.freeze({ ...record, recovery: { status: 'terminal', resumable: false } });
-    if (record.status !== 'executing') {
+    if (record.status !== 'executing' && record.status !== 'recovering') {
       return Object.freeze({ ...record, recovery: { status: 'available', resumable: false, reason: 'Mission is not interrupted inside an executable phase' } });
     }
     if (!options.resume) {
       return Object.freeze({ ...record, recovery: { status: 'available', resumable: true, reason: 'Call recover(id, { resume: true }) to resume unfinished task-graph work.' } });
     }
 
+    const fenced = typeof this.missionStore.claimRecovery === 'function';
+    const claimed = fenced
+      ? await this.missionStore.claimRecovery(missionExecutionId, options.owner ?? this.idFactory(record.missionId + ':recovery'), options.leaseMs ?? 30000)
+      : record;
+    if (!claimed) return null;
+    if (fenced && claimed.status !== 'executing' && claimed.status !== 'recovering') {
+      await this.missionStore.releaseRecovery(missionExecutionId, claimed.recoveryLease.token);
+      return this.missionStore.get(missionExecutionId);
+    }
+    let result;
+    try {
+      result = await this.#resumeClaimed(claimed, options);
+    } finally {
+      if (fenced) await this.missionStore.releaseRecovery(missionExecutionId, claimed.recoveryLease.token);
+    }
+    return fenced ? this.missionStore.get(missionExecutionId) : result;
+  }
+
+  async #resumeClaimed(record, options) {
     const current = await this.missionStore.save({ ...record, status: 'recovering', recovery: { status: 'started', resumable: true } }, record.version);
     this.#emit('mission.recovery.started', current);
     let execution;

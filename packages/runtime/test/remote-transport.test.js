@@ -30,6 +30,7 @@ test('deduplicates the same remote request before re-execution', async () => {
   assert.equal(calls, 1);
   assert.deepEqual(second, first);
   await assert.rejects(transport.dispatch({ ...request, input: { different: true } }), { code: 'REQUEST_CONFLICT' });
+  await assert.rejects(transport.dispatch({ ...request, securityContext: { trustLevel: 'untrusted' } }), { code: 'REQUEST_CONFLICT' });
 });
 
 test('propagates parent cancellation to the remote handler', async () => {

@@ -1,0 +1,51 @@
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { writeAtomicJson } from './atomic-json.js';
+
+const file = process.argv[2];
+try {
+  let input = '';
+  for await (const chunk of process.stdin) {
+    input += chunk;
+    if (input.length > 1_000_000) throw fault('FAILOVER_INPUT_TOO_LARGE');
+  }
+  const request = JSON.parse(input);
+  let parsed;
+  try { parsed = JSON.parse(await readFile(file, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT' && !request.observed) parsed = []; else throw error; }
+  if (!Array.isArray(parsed) || parsed.length > 10_000) throw fault('FAILOVER_STORE_CORRUPT');
+  const records = new Map();
+  for (const record of parsed) {
+    if (!record || record.schemaVersion !== '0.1.0' || typeof record.name !== 'string' || !record.name.trim() ||
+        typeof record.owner !== 'string' || !record.owner.trim() ||
+        (record.token !== null && (typeof record.token !== 'string' || !record.token)) ||
+        !Number.isSafeInteger(record.epoch) || record.epoch < 1 ||
+        !Number.isSafeInteger(record.version) || record.version < 0 ||
+        !Number.isSafeInteger(record.expiresAt) || record.expiresAt < 0 || records.has(record.name)) throw fault('FAILOVER_STORE_CORRUPT');
+    records.set(record.name, record);
+  }
+  const { action, name, owner, token, epoch, leaseMs, result } = request;
+  if (typeof name !== 'string' || !name.trim()) throw fault('FAILOVER_NAME_INVALID');
+  const now = Date.now();
+  const current = records.get(name) ?? null;
+  let next = current;
+  if (action === 'claim') {
+    if (typeof owner !== 'string' || !owner.trim() || !Number.isSafeInteger(leaseMs) || leaseMs < 1000 || !Number.isSafeInteger(now + leaseMs) || current?.epoch === Number.MAX_SAFE_INTEGER) throw fault('FAILOVER_REQUEST_INVALID');
+    if (current?.expiresAt > now) throw fault('FAILOVER_LEASE_HELD');
+    next = { schemaVersion: '0.1.0', name, owner, token: randomUUID(), epoch: (current?.epoch ?? 0) + 1, expiresAt: now + leaseMs, version: current?.version ?? 0, result: current?.result ?? null };
+  } else if (action === 'renew' || action === 'commit' || action === 'release') {
+    if (!current || !token || current.token !== token || current.epoch !== epoch || current.expiresAt <= now) throw fault('FAILOVER_FENCE_REJECTED');
+    if (action === 'renew') {
+      if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000 || !Number.isSafeInteger(now + leaseMs)) throw fault('FAILOVER_REQUEST_INVALID');
+      next = { ...current, expiresAt: now + leaseMs };
+    } else if (action === 'commit') {
+      if (result === undefined || current.version === Number.MAX_SAFE_INTEGER) throw fault('FAILOVER_REQUEST_INVALID');
+      next = { ...current, result, version: current.version + 1 };
+    } else next = { ...current, token: null, expiresAt: 0 };
+  } else if (action !== 'inspect') throw fault('FAILOVER_REQUEST_INVALID');
+  if (next !== current) { records.set(name, next); await writeAtomicJson(file, [...records.values()]); }
+  process.stdout.write(JSON.stringify({ ok: true, record: next, observed: parsed.length > 0 || next !== null }));
+} catch (error) {
+  process.stdout.write(JSON.stringify({ ok: false, code: typeof error?.code === 'string' && error.code.startsWith('FAILOVER_') ? error.code : 'FAILOVER_STORE_ERROR' }));
+}
+function fault(code) { return Object.assign(new Error(code), { code }); }

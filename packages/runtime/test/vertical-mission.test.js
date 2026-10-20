@@ -85,6 +85,24 @@ test('terminal missions cannot be resumed', async () => {
   assert.equal(recovered.recovery.resumable, false);
 });
 
+test('recovery returns a mission finished between inspection and claim without releasing a missing lease', async () => {
+  let releases = 0;
+  let resumes = 0;
+  const store = {
+    get: async () => ({ missionId: 'mission/race', missionExecutionId: 'exec/race', status: 'executing' }),
+    save: async () => {},
+    claimRecovery: async () => ({ missionId: 'mission/race', missionExecutionId: 'exec/race', status: 'succeeded', recoveryLease: null }),
+    releaseRecovery: async () => { releases++; }
+  };
+  const graph = { execute: async () => {}, resume: async () => { resumes++; } };
+  const engine = new VerticalMissionEngine({ taskDecomposer: new TaskDecomposer(), taskGraphExecutor: graph, missionStore: store });
+  const result = await engine.recover('exec/race', { resume: true });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.recovery.resumable, false);
+  assert.equal(releases, 0);
+  assert.equal(resumes, 0);
+});
+
 test('a second engine cannot resume a mission while recovery is claimed', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'super-vertical-fence-'));
   t.after(() => import('node:fs/promises').then(({ rm }) => rm(directory, { recursive: true, force: true })));

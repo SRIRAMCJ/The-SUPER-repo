@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SecurityCapabilityGate } from '../src/security-capability.js';
+import { SecurityCapabilityGate, SECURITY_PERMISSIONS, SECURITY_TRUST_LEVELS } from '../src/security-capability.js';
 import { CapabilityRegistry } from '../src/registry.js';
 import { ToolRuntime } from '../src/tool-runtime.js';
 
@@ -12,6 +12,12 @@ test('security gate fails closed on malformed trust context and protected overri
   assert.equal(gate.authorize(capability(), {}).decision, 'invalid');
   assert.equal(gate.authorize(capability(), context({ allowed: true })).allowed, false);
   assert.equal(gate.authorize(capability(), context({ grantedPermissions: ['network'], network: true })).allowed, false);
+  assert.equal(gate.authorize({ id: 123 }, context()).decision, 'invalid');
+});
+
+test('asynchronous authorization dependencies fail closed', () => {
+  const gate = new SecurityCapabilityGate({ policyEngine: { authorize: async () => ({ allowed: true }) } });
+  assert.equal(gate.authorize(capability(), context()).decision, 'invalid');
 });
 
 test('security gate requires declared and explicitly granted permissions', () => {
@@ -21,6 +27,17 @@ test('security gate requires declared and explicitly granted permissions', () =>
   assert.equal(gate.authorize(capability({ permissions: ['network'] }), context({ grantedPermissions: ['network'] })).allowed, false);
   assert.equal(gate.authorize(capability({ permissions: ['network'] }), context({ grantedPermissions: ['network'], network: true })).allowed, true);
   assert.equal(gate.authorize(capability({ permissions: ['unknown'] }), context({ grantedPermissions: ['unknown'] })).allowed, false);
+  assert.equal(gate.authorize(capability({ permissions: ['filesystem.read'] }), context({ grantedPermissions: ['filesystem.read'] })).allowed, true);
+  assert.equal(gate.authorize(capability({ permissions: ['filesystem.read', 'process.git'] }), context({ grantedPermissions: ['filesystem.read', 'process.git'] })).allowed, true);
+  assert.equal(gate.authorize(capability({ permissions: ['filesystem.write'] }), context({ grantedPermissions: ['filesystem.read'] })).allowed, false);
+});
+
+test('exported permission and trust lists cannot change authorization rules', () => {
+  assert.throws(() => SECURITY_PERMISSIONS.push('arbitrary'));
+  assert.throws(() => SECURITY_TRUST_LEVELS.push('root'));
+  const gate = new SecurityCapabilityGate();
+  assert.equal(gate.authorize(capability({ permissions: ['arbitrary'] }), context({ grantedPermissions: ['arbitrary'] })).allowed, false);
+  assert.equal(gate.authorize(capability(), context({ trustLevel: 'root' })).allowed, false);
 });
 
 test('security gate honors policy and trust denial and bounds detached audit records', () => {

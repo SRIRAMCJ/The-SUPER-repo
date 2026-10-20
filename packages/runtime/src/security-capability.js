@@ -1,6 +1,6 @@
 const SCHEMA_VERSION = '0.1.0';
 const TRUST_LEVELS = new Set(['untrusted', 'trusted', 'system']);
-const PERMISSIONS = new Set(['network', 'filesystem', 'subprocess', 'secrets']);
+const PERMISSIONS = new Set(['network', 'filesystem', 'filesystem.read', 'filesystem.write', 'subprocess', 'process.git', 'secrets']);
 const DECISIONS = Object.freeze({ ALLOWED: 'allowed', DENIED: 'denied', INVALID: 'invalid' });
 const RESERVED_CONTEXT_KEYS = new Set(['allowed', 'decision', 'security', 'permissions']);
 
@@ -20,7 +20,7 @@ export class SecurityCapabilityGate {
   }
 
   authorize(capability, context = {}) {
-    const decisionId = this.idFactory(capability?.id ?? 'unknown');
+    const decisionId = this.idFactory(typeof capability?.id === 'string' ? capability.id : 'unknown');
     const timestamp = this.clock().toISOString();
     let decision;
     try {
@@ -28,20 +28,20 @@ export class SecurityCapabilityGate {
       if (normalized.trustLevel === 'untrusted' && normalized.capability.risk === 'critical') {
         decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.DENIED, 'Untrusted context cannot execute critical-risk capabilities', null);
       } else {
-      const governanceDecision = this.governance?.authorize(
-        { id: normalized.id, classification: 'control', permissions: normalized.permissions },
-        normalized.governanceContext,
-      );
-      if (governanceDecision && governanceDecision.allowed !== true) {
-        decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.DENIED, 'Governance denied capability execution', governanceDecision.reason);
-      } else {
-        const policyDecision = this.policyEngine?.authorize(normalized.capability, normalized.policyContext);
-        if (policyDecision && policyDecision.allowed !== true) {
-          decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.DENIED, 'Policy denied capability execution', policyDecision.reason);
+        const governanceDecision = synchronousDecision(this.governance?.authorize(
+          { id: normalized.id, classification: 'control', permissions: normalized.permissions },
+          normalized.governanceContext,
+        ));
+        if (governanceDecision && governanceDecision.allowed !== true) {
+          decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.DENIED, 'Governance denied capability execution', governanceDecision.reason);
         } else {
-          decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.ALLOWED, 'Security checks passed', null);
+          const policyDecision = synchronousDecision(this.policyEngine?.authorize(normalized.capability, normalized.policyContext));
+          if (policyDecision && policyDecision.allowed !== true) {
+            decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.DENIED, 'Policy denied capability execution', policyDecision.reason);
+          } else {
+            decision = buildDecision(decisionId, timestamp, normalized, DECISIONS.ALLOWED, 'Security checks passed', null);
+          }
         }
-      }
       }
     } catch (error) {
       decision = deepFreeze({
@@ -86,7 +86,7 @@ function normalizeRequest(capability, context) {
   if (capability.permissions?.some((permission) => !PERMISSIONS.has(permission))) throw new Error('Capability contains unsupported security permission');
   for (const permission of grantedPermissions) if (!requestedPermissions.has(permission)) throw new Error(`Security context grants undeclared permission: ${permission}`);
   for (const permission of requestedPermissions) if (!grantedPermissions.has(permission)) throw new Error(`Security context does not grant required permission: ${permission}`);
-  if (requestedPermissions.has('network') && context.network !== true) throw new Error('Network permission requires explicit network=true');
+  if ([...requestedPermissions].some((permission) => permission === 'network' || permission.startsWith('network.')) && context.network !== true) throw new Error('Network permission requires explicit network=true');
   const policyContext = { approval: context.approval === true, network: context.network === true, trustLevel };
   const governanceContext = { approval: context.approval === true, network: context.network === true };
   return {
@@ -103,6 +103,14 @@ function normalizePermissions(value) {
   if (value === undefined || value === null) return new Set();
   if (!Array.isArray(value) || value.some((permission) => typeof permission !== 'string')) throw new TypeError('Permissions must be an array of strings');
   return new Set(value.map((permission) => permission.trim()).filter(Boolean));
+}
+
+function synchronousDecision(value) {
+  if (value && typeof value.then === 'function') {
+    Promise.resolve(value).catch(() => {});
+    throw new TypeError('Security gate policy and governance must return synchronous decisions');
+  }
+  return value;
 }
 
 function buildDecision(decisionId, timestamp, normalized, decision, reason, detail) {
@@ -129,4 +137,7 @@ function defaultDecisionId(capabilityId) {
   return `security_${capabilityId.replaceAll('/', '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export { SCHEMA_VERSION as SECURITY_CAPABILITY_SCHEMA_VERSION, TRUST_LEVELS as SECURITY_TRUST_LEVELS, PERMISSIONS as SECURITY_PERMISSIONS, DECISIONS as SECURITY_DECISIONS };
+// Do not export the live sets: Set.add() can mutate even an Object.freeze()'d set.
+const SECURITY_TRUST_LEVELS = Object.freeze([...TRUST_LEVELS]);
+const SECURITY_PERMISSIONS = Object.freeze([...PERMISSIONS]);
+export { SCHEMA_VERSION as SECURITY_CAPABILITY_SCHEMA_VERSION, SECURITY_TRUST_LEVELS, SECURITY_PERMISSIONS, DECISIONS as SECURITY_DECISIONS };

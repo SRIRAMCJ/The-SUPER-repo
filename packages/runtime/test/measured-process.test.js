@@ -30,6 +30,15 @@ test('memory budget terminates a child without crashing the parent', async () =>
   assert.equal((await runtime.execute({ modulePath, exportName: 'echo', input: { value: 1 }, ...budget })).output.value, 2);
 });
 
+test('Linux RSS cap catches native Buffer allocation outside JS heap', { skip: process.platform !== 'linux' }, async () => {
+  const runtime = new MeasuredProcessRuntime({ root, sampleMs: 5 });
+  const baseline = await runtime.execute({ modulePath, exportName: 'echo', input: { value: 1 }, ...budget, rssBytes: 256 * 1024 * 1024 });
+  assert.ok(baseline.usage.rssBytes > 0);
+  await assert.rejects(runtime.execute({ modulePath, exportName: 'allocateNative', ...budget,
+    heapBytes: 256 * 1024 * 1024, rssBytes: Math.max(64 * 1024 * 1024, baseline.usage.rssBytes + 32 * 1024 * 1024) }), { code: 'PROCESS_RSS_LIMIT' });
+  assert.equal(runtime.activeCount(), 0);
+});
+
 test('concurrency and path confinement reject excess or external work', async () => {
   const runtime = new MeasuredProcessRuntime({ root, maxConcurrent: 1 });
   const first = runtime.execute({ modulePath, exportName: 'wait', ...budget });

@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { readFileSync } from 'node:fs';
 
 process.on('message', ({ file, exportName, input, limits, sampleMs }) => {
   const worker = new Worker(new URL('./process-budget-thread.js', import.meta.url), {
@@ -11,6 +12,13 @@ process.on('message', ({ file, exportName, input, limits, sampleMs }) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
+    if (message.ok && limits.rssBytes) {
+      try {
+        const peak = /^VmHWM:\s+(\d+) kB$/m.exec(readFileSync('/proc/self/status', 'utf8'));
+        if (!peak || !Number.isSafeInteger(Number(peak[1]) * 1024)) throw new Error('RSS unavailable');
+        message.usage.rssBytes = Number(peak[1]) * 1024;
+      } catch { message = { ok: false, code: 'PROCESS_MEASUREMENT_FAILED' }; }
+    }
     process.send(message, () => { void worker.terminate().finally(() => process.exit(0)); });
   };
   const sample = async () => {
@@ -19,6 +27,12 @@ process.on('message', ({ file, exportName, input, limits, sampleMs }) => {
     try {
       const [cpu, heap] = await Promise.all([worker.cpuUsage(), worker.getHeapStatistics()]);
       const usage = { cpuMs: (cpu.user + cpu.system) / 1000, heapBytes: heap.used_heap_size };
+      if (limits.rssBytes) {
+        const peak = /^VmHWM:\s+(\d+) kB$/m.exec(readFileSync('/proc/self/status', 'utf8'));
+        if (!peak || !Number.isSafeInteger(Number(peak[1]) * 1024)) throw new Error('RSS unavailable');
+        usage.rssBytes = Number(peak[1]) * 1024;
+        if (usage.rssBytes > limits.rssBytes) { finish({ ok: false, code: 'PROCESS_RSS_LIMIT' }); return null; }
+      }
       if (usage.cpuMs > limits.cpuMs) { finish({ ok: false, code: 'PROCESS_CPU_LIMIT' }); return null; }
       if (usage.heapBytes > limits.heapBytes) { finish({ ok: false, code: 'PROCESS_HEAP_LIMIT' }); return null; }
       return usage;

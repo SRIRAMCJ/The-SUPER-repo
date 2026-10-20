@@ -2,12 +2,28 @@
 
 import path from 'node:path';
 import { createRepositoryAnalystRuntime } from '../../../packages/agents/repository-analyst/src/index.js';
+import { investigateJavaScript } from '../../../packages/tools/reverse-engineering/src/index.js';
 
 const args = process.argv.slice(2);
 
 async function main() {
   const command = args[0];
   if (!command || command === 'help' || command === '--help' || command === '-h') return printHelp();
+  if (command === 'investigate') {
+    const target = args[1];
+    if (!target || target.startsWith('--')) throw new Error('Usage: super investigate <path> [--query=text] [--json]');
+    const unknown = args.slice(2).filter((arg) => arg !== '--json' && !arg.startsWith('--query='));
+    if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
+    const query = args.find((arg) => arg.startsWith('--query='))?.slice('--query='.length);
+    const report = await investigateJavaScript(path.resolve(target), { query });
+    if (args.includes('--json')) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    else {
+      console.log(`Investigated ${report.files.length} files; ${report.findings.length} evidence items; ${report.skipped.length} skipped`);
+      for (const finding of report.findings) console.log(`${finding.evidence.path}:${finding.evidence.line}:${finding.evidence.column} [${finding.kind}] ${finding.value}`);
+      for (const limit of report.limitations) console.log(`Limit: ${limit}`);
+    }
+    return;
+  }
   if (command !== 'analyze') throw new Error(`Unknown command: ${command}`);
 
   const repositoryPath = args.find((arg, index) => index > 0 && !arg.startsWith('--')) ?? process.cwd();
@@ -54,6 +70,7 @@ function printHelp() {
   console.log('');
   console.log('Usage:');
   console.log('  super analyze [path] [--json] [--max-files=N]');
+  console.log('  super investigate <path> [--query=text] [--json]');
 }
 
 main().catch((error) => {

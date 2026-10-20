@@ -90,6 +90,20 @@ test('an uncooperative recovery adapter cannot hold shutdown open', async () => 
   assert.equal(lifecycle.getState().state, 'stopped');
 });
 
+test('an uncooperative recovery timeout closes admission and does not retry automatically', async () => {
+  const coordinator = new RuntimeShutdownCoordinator({ lifecycle: new RuntimeLifecycleManager(), admission: new RuntimeShutdownAdmission() });
+  let calls = 0, errorCode;
+  const host = new RuntimeDeploymentHost({ coordinator, failover: { attempt: () => { calls++; return new Promise(() => {}); } },
+    name: 'service', incidentId: () => 'incident', intervalMs: 5, attemptTimeoutMs: 30,
+    onResult: (result) => { errorCode = result.error?.code; } });
+  await host.start();
+  await eventually(() => errorCode === 'RECOVERY_ATTEMPT_TIMEOUT');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(calls, 1);
+  assert.equal(host.admission.state(), 'stopped');
+  await host.shutdown();
+});
+
 test('a killed host loses its lease and a new host recovers after expiry', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'super-deployment-crash-'));
   let child;

@@ -72,10 +72,16 @@ export class RuntimeDeploymentHost {
     try {
       const id = await boundedIncident(this.incidentId, this.#controller.signal, this.pollTimeoutMs);
       if (this.#running && typeof id === 'string' && id.trim()) {
-        const result = await boundedCall(() => this.failover.attempt(this.name, id, { signal: this.#controller.signal }), this.#controller.signal, this.attemptTimeoutMs);
+        const result = await boundedCall(() => this.failover.attempt(this.name, id, { signal: this.#controller.signal }), this.#controller.signal, this.attemptTimeoutMs, 'RECOVERY_ATTEMPT_TIMEOUT');
         this.#emit(result);
       }
-    } catch (error) { if (this.#running) this.#emit({ status: 'error', error }); }
+    } catch (error) {
+      if (error?.code === 'RECOVERY_ATTEMPT_TIMEOUT') {
+        this.#running = false;
+        this.admission.forceStop();
+      }
+      this.#emit({ status: 'error', error });
+    }
     finally { this.#schedule(this.intervalMs); }
   }
 
@@ -86,13 +92,13 @@ async function boundedIncident(provider, signal, timeoutMs) {
   return boundedCall(() => provider({ signal }), signal, timeoutMs);
 }
 
-async function boundedCall(work, signal, timeoutMs) {
+async function boundedCall(work, signal, timeoutMs, timeoutCode = 'INCIDENT_TIMEOUT') {
   let timer, abort;
   const cancelled = new Promise((_, reject) => {
     abort = () => reject(Object.assign(new Error('Incident polling cancelled'), { code: 'INCIDENT_CANCELLED' }));
     signal.addEventListener('abort', abort, { once: true });
   });
-  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('Incident polling timed out'), { code: 'INCIDENT_TIMEOUT' })), timeoutMs); });
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(timeoutCode), { code: timeoutCode })), timeoutMs); });
   try {
     if (signal.aborted) abort();
     return await Promise.race([Promise.resolve().then(work), cancelled, timeout]);

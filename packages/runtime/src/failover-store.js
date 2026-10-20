@@ -19,6 +19,12 @@ export class FileFailoverStore {
   claim(name, owner, leaseMs = 30_000) { return this.#call({ action: 'claim', name, owner, leaseMs }); }
   renew(name, lease, leaseMs = 30_000) { return this.#call({ action: 'renew', name, ...credentials(lease), leaseMs }); }
   commit(name, lease, result) { return this.#call({ action: 'commit', name, ...credentials(lease), result }); }
+  writeFencedJson(name, lease, destinationPath, value) {
+    if (typeof destinationPath !== 'string' || !destinationPath) throw new TypeError('destinationPath is required');
+    const destination = path.resolve(destinationPath);
+    if (destination === this.filePath || destination === `${this.filePath}.lock`) throw new TypeError('destination cannot overwrite failover state or lock');
+    return this.#call({ action: 'writeEffect', name, ...credentials(lease), destination, value });
+  }
   release(name, lease) { return this.#call({ action: 'release', name, ...credentials(lease) }); }
   inspect(name) { return this.#call({ action: 'inspect', name }); }
 

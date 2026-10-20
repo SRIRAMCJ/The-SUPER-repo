@@ -23,5 +23,7 @@ jobs:
         run: npm run test:runtime
       - name: Run repository analyst tests
         run: npm run test:repository-analyst
+      - name: Run reverse engineering tests
+        run: npm run test:reverse-engineering
       - name: Run CLI tests
         run: npm run test:cli

@@ -5,15 +5,16 @@ export class ToolRuntime {
   #records = new Map();
   #active = new Set();
 
-  constructor({ registry, policyEngine = null, securityGate = null, resourceGovernance = null, shutdownAdmission = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
+  constructor({ registry, policyEngine = null, securityGate = null, resourceGovernance = null, shutdownAdmission = null, networkTransport = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
     if (!registry || typeof registry.require !== 'function') throw new TypeError('ToolRuntime requires a capability registry');
     if (policyEngine && typeof policyEngine.authorize !== 'function') throw new TypeError('policyEngine must expose authorize()');
     if (securityGate && typeof securityGate.authorize !== 'function') throw new TypeError('securityGate must expose authorize()');
     if (resourceGovernance && (typeof resourceGovernance.admit !== 'function' || typeof resourceGovernance.release !== 'function')) throw new TypeError('resourceGovernance must expose admit() and release()');
     if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
+    if (networkTransport && typeof networkTransport.session !== 'function') throw new TypeError('networkTransport must expose session()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
-    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.resourceGovernance = resourceGovernance; this.shutdownAdmission = shutdownAdmission; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
+    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.resourceGovernance = resourceGovernance; this.shutdownAdmission = shutdownAdmission; this.networkTransport = networkTransport; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
   }
 
   async execute(toolId, input = {}, context = {}) {
@@ -73,7 +74,8 @@ export class ToolRuntime {
       handlerPending = true;
       const invocation = Promise.resolve().then(() => {
         if (controller.signal.aborted) throw controller.signal.reason;
-        return entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
+        const network = this.networkTransport?.session({ maxRequests: entry.manifest.resourceRequest?.networkRequests ?? 0, signal: controller.signal });
+        return entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest), ...(network ? { network } : {}) });
       });
       const settle = () => { handlerPending = false; releaseReservation(); releaseAdmission(); if (callerFinished) this.#active.delete(executionId); };
       // Keep an uncooperative handler's ID reserved even after the caller times out.

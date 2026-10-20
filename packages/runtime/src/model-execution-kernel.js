@@ -2,6 +2,7 @@ const SCHEMA_VERSION = '0.1.0';
 const VALID_MODES = new Set(['chat', 'completion', 'embedding', 'multimodal']);
 
 export class ModelExecutionKernel {
+  #active = new Set();
   constructor({ providers, router = null, policy = null, events = null, clock = () => new Date(), idFactory = defaultExecutionId, maxRetries = 2, defaultTimeoutMs = null, maxExecutions = 1000 } = {}) {
     if (!providers || typeof providers.resolve !== 'function' || typeof providers.require !== 'function') throw new TypeError('ModelExecutionKernel requires ModelProviderRegistry');
     if (router && typeof router.route !== 'function') throw new TypeError('router must expose route()');
@@ -26,7 +27,11 @@ export class ModelExecutionKernel {
     const normalized = normalizeRequest(request);
     const executionId = context.executionId ?? this.idFactory(normalized.model ?? 'auto');
     const correlationId = context.correlationId ?? executionId;
-    if (this.executions.has(executionId)) return failureRecord({ executionId, correlationId, request: normalized, code: 'MODEL_EXECUTION_ID_CONFLICT', message: `Execution already exists: ${executionId}` });
+    if (this.#active.has(executionId) || this.executions.has(executionId)) return failureRecord({ executionId, correlationId, request: normalized, code: 'MODEL_EXECUTION_ID_CONFLICT', message: `Execution already exists: ${executionId}` });
+    this.#active.add(executionId);
+    let pending = 0;
+    let callerFinished = false;
+    try {
     const startedAt = this.clock().toISOString();
     const route = normalized.provider ? null : this.#route(normalized);
     const providerId = normalized.provider ?? route?.selection?.provider;
@@ -50,7 +55,14 @@ export class ModelExecutionKernel {
       const controller = new AbortController();
       const detach = linkAbort(parentSignal, controller);
       try {
-        const result = await withTimeout(Promise.resolve().then(() => provider.generate({ ...normalized, provider: providerId, model, signal: controller.signal, executionId, correlationId })), normalized.timeoutMs ?? this.defaultTimeoutMs, controller, providerId, model);
+        const invocation = Promise.resolve().then(() => {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          return provider.generate({ ...normalized, provider: providerId, model, signal: controller.signal, executionId, correlationId });
+        });
+        pending += 1;
+        const settled = () => { pending -= 1; if (callerFinished && pending === 0) this.#active.delete(executionId); };
+        invocation.then(settled, settled);
+        const result = await withTimeout(invocation, normalized.timeoutMs ?? this.defaultTimeoutMs, controller, providerId, model);
         const finishedAt = this.clock().toISOString();
         const output = { provider: providerId, model, attempt, startedAt: attemptStarted, finishedAt, result: clone(result) };
         attempts.push(output);
@@ -59,12 +71,17 @@ export class ModelExecutionKernel {
         return freezeDeep(clone(execution));
       } catch (error) {
         const normalizedError = normalizeError(error, controller.signal);
+        if (normalizedError.code === 'MODEL_EXECUTION_TIMEOUT' && pending > 0) normalizedError.retryable = false;
         attempts.push({ attempt, startedAt: attemptStarted, finishedAt: this.clock().toISOString(), error: normalizedError });
         this.#emit({ type: 'model.execution.attempt_failed', executionId, correlationId, status: 'failed', data: { attempt, provider: providerId, model }, error: normalizedError });
         if (!normalizedError.retryable || attempt > this.maxRetries || parentSignal?.aborted || controller.signal.aborted && normalizedError.code !== 'MODEL_EXECUTION_TIMEOUT') {
           return this.#finish({ executionId, correlationId, status: normalizedError.code === 'MODEL_EXECUTION_CANCELLED' ? 'cancelled' : 'failed', startedAt, request: normalized, provider: providerId, model, route, attempts, error: normalizedError });
         }
       } finally { detach(); }
+    }
+    } finally {
+      callerFinished = true;
+      if (pending === 0) this.#active.delete(executionId);
     }
   }
 

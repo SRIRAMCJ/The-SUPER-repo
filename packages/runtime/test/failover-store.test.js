@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, unlink, writeFile, readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,4 +54,19 @@ test('observed state disappearance fails closed', () => temporary(async (file) =
 test('corrupted lease metadata cannot be reclaimed', () => temporary(async (file) => {
   await writeFile(file, JSON.stringify([{ schemaVersion: '0.1.0', name: 'runtime', owner: 'a', token: 'old', epoch: 1, version: 0, expiresAt: 'tomorrow' }]));
   await assert.rejects(new FileFailoverStore(file).claim('runtime', 'b'), { code: 'FAILOVER_STORE_CORRUPT' });
+}));
+
+test('file effect commits under the lease lock and rejects a stale worker after takeover', () => temporary(async (file) => {
+  const firstStore = new FileFailoverStore(file);
+  const secondStore = new FileFailoverStore(file);
+  const effect = path.join(path.dirname(file), 'effect.json');
+  const first = await firstStore.claim('runtime', 'a', 1000);
+  await firstStore.writeFencedJson('runtime', first, effect, { owner: 'a' });
+  assert.deepEqual(JSON.parse(await readFile(effect, 'utf8')), { owner: 'a' });
+  await new Promise((resolve) => setTimeout(resolve, 1010));
+  const second = await secondStore.claim('runtime', 'b', 1000);
+  await assert.rejects(firstStore.writeFencedJson('runtime', first, effect, { owner: 'stale' }), { code: 'FAILOVER_FENCE_REJECTED' });
+  await secondStore.writeFencedJson('runtime', second, effect, { owner: 'b' });
+  assert.deepEqual(JSON.parse(await readFile(effect, 'utf8')), { owner: 'b' });
+  assert.throws(() => secondStore.writeFencedJson('runtime', second, file, {}), TypeError);
 }));

@@ -28,6 +28,7 @@ export { RuntimeResourceGovernance, RESOURCE_GOVERNANCE_SCHEMA_VERSION, RESOURCE
 export { RuntimeConfigurationKernel, RUNTIME_CONFIGURATION_SCHEMA_VERSION } from './configuration.js';
 export { RuntimeShutdownAdmission, RUNTIME_SHUTDOWN_ADMISSION_SCHEMA_VERSION } from './shutdown-admission.js';
 export { RuntimeShutdownCoordinator } from './shutdown-coordinator.js';
+export { RuntimeSupervisorKernel, RUNTIME_SUPERVISOR_SCHEMA_VERSION, RUNTIME_SUPERVISOR_STATES } from './supervisor.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';
 export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';

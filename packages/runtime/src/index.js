@@ -26,6 +26,7 @@ export { RuntimeLifecycleManager, RUNTIME_LIFECYCLE_STATES } from './lifecycle.j
 export { RuntimeReadinessKernel, RUNTIME_READINESS_SCHEMA_VERSION, RUNTIME_READINESS_STATES, RUNTIME_PROBE_STATES } from './readiness.js';
 export { RuntimeResourceGovernance, RESOURCE_GOVERNANCE_SCHEMA_VERSION, RESOURCE_GOVERNANCE_KEYS } from './resource-governance.js';
 export { RuntimeConfigurationKernel, RUNTIME_CONFIGURATION_SCHEMA_VERSION } from './configuration.js';
+export { RuntimeShutdownAdmission, RUNTIME_SHUTDOWN_ADMISSION_SCHEMA_VERSION } from './shutdown-admission.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';
 export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';

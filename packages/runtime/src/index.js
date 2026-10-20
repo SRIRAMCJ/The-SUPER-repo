@@ -31,6 +31,7 @@ export { RuntimeShutdownCoordinator } from './shutdown-coordinator.js';
 export { RuntimeSupervisorKernel, RUNTIME_SUPERVISOR_SCHEMA_VERSION, RUNTIME_SUPERVISOR_STATES } from './supervisor.js';
 export { installProcessShutdown } from './process-shutdown.js';
 export { MeasuredProcessRuntime, createMeasuredProcessHandler } from './measured-process.js';
+export { FileFailoverStore } from './failover-store.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';
 export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';

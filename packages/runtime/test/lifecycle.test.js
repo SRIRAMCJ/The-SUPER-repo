@@ -45,6 +45,46 @@ test('startup failure enters failed state and retains a diagnostic history entry
   assert.ok(history.some((entry) => entry.state === 'failed' && entry.error === 'database unavailable'));
 });
 
+test('partial startup rolls back in reverse order and can restart after cleanup', async () => {
+  const calls = [];
+  let broken = true;
+  const manager = new RuntimeLifecycleManager({ components: [
+    { name: 'storage', start: () => calls.push('storage:start'), stop: () => calls.push('storage:stop') },
+    { name: 'worker', dependsOn: ['storage'], start: () => calls.push('worker:start'), stop: () => calls.push('worker:stop') },
+    { name: 'api', dependsOn: ['worker'], start: () => { calls.push('api:start'); if (broken) throw new Error('api unavailable'); }, stop: () => calls.push('api:stop') }
+  ] });
+  await assert.rejects(manager.start(), /api unavailable/);
+  assert.deepEqual(calls, ['storage:start', 'worker:start', 'api:start', 'worker:stop', 'storage:stop']);
+  assert.equal(manager.getState().cleanupRequired, false);
+  broken = false;
+  await manager.start();
+  assert.equal(manager.getState().state, 'running');
+  await manager.stop();
+});
+
+test('rollback and stop failures continue cleanup and block restart until a successful stop', async () => {
+  const calls = [];
+  let stopFails = true;
+  let startupFails = true;
+  const manager = new RuntimeLifecycleManager({ components: [
+    { name: 'a', start: () => calls.push('a:start'), stop: () => calls.push('a:stop') },
+    { name: 'b', dependsOn: ['a'], start: () => calls.push('b:start'), stop: () => { calls.push('b:stop'); if (stopFails) throw new Error('b stuck'); } },
+    { name: 'c', dependsOn: ['b'], start: () => { calls.push('c:start'); if (startupFails) throw new Error('c offline'); }, stop: () => calls.push('c:stop') }
+  ] });
+  await assert.rejects(manager.start(), (error) => error instanceof AggregateError && error.errors.some((item) => item.message === 'c offline') && error.errors.some((item) => item.message === 'b stuck'));
+  assert.deepEqual(calls.slice(-2), ['b:stop', 'a:stop']);
+  assert.equal(manager.getState().cleanupRequired, true);
+  await assert.rejects(manager.start(), /cleanup succeeds/);
+  await assert.rejects(manager.stop(), AggregateError);
+  assert.deepEqual(calls.slice(-3), ['c:stop', 'b:stop', 'a:stop']);
+  stopFails = false;
+  await manager.stop();
+  assert.equal(manager.getState().cleanupRequired, false);
+  startupFails = false;
+  await manager.start();
+  await manager.stop();
+});
+
 test('dependency cycles and missing dependencies fail deterministically', async () => {
   const cycle = new RuntimeLifecycleManager({ components: [
     { name: 'a', dependsOn: ['b'], start: () => {} },

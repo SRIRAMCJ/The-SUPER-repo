@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { RuntimeDeploymentHost, RuntimeFailoverKernel, FileFailoverStore, RuntimeSupervisorKernel,
   RuntimeLifecycleManager, RuntimeShutdownAdmission, RuntimeShutdownCoordinator } from '../src/index.js';
 
@@ -74,4 +75,46 @@ test('a stuck incident provider cannot hold shutdown open', async () => {
   await running;
   await host.shutdown({ deadlineMs: 1000 });
   assert.equal(lifecycle.getState().state, 'stopped');
+});
+
+test('an uncooperative recovery adapter cannot hold shutdown open', async () => {
+  const lifecycle = new RuntimeLifecycleManager();
+  const coordinator = new RuntimeShutdownCoordinator({ lifecycle, admission: new RuntimeShutdownAdmission() });
+  let entered;
+  const running = new Promise((resolve) => { entered = resolve; });
+  const host = new RuntimeDeploymentHost({ coordinator, failover: { attempt: () => { entered(); return new Promise(() => {}); } },
+    name: 'service', incidentId: () => 'incident', intervalMs: 10, attemptTimeoutMs: 100 });
+  await host.start();
+  await running;
+  await host.shutdown({ deadlineMs: 1000 });
+  assert.equal(lifecycle.getState().state, 'stopped');
+});
+
+test('a killed host loses its lease and a new host recovers after expiry', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'super-deployment-crash-'));
+  let child;
+  try {
+    const file = path.join(directory, 'failover.json');
+    const moduleUrl = new URL('../src/index.js', import.meta.url).href;
+    const script = `import { RuntimeDeploymentHost, RuntimeFailoverKernel, FileFailoverStore, RuntimeSupervisorKernel, RuntimeLifecycleManager, RuntimeShutdownAdmission, RuntimeShutdownCoordinator } from ${JSON.stringify(moduleUrl)};
+      const coordinator = new RuntimeShutdownCoordinator({ lifecycle: new RuntimeLifecycleManager(), admission: new RuntimeShutdownAdmission() });
+      const failover = new RuntimeFailoverKernel({ supervisor: new RuntimeSupervisorKernel({ components: { service: () => ({ state: 'failed' }) } }), store: new FileFailoverStore(process.argv[1]), owner: 'crashed', leaseMs: 1000, renewEveryMs: 100, recover: async () => { console.log('claimed'); return new Promise(() => {}); } });
+      await new RuntimeDeploymentHost({ coordinator, failover, name: 'service', incidentId: () => 'incident', intervalMs: 20 }).start();`;
+    child = spawn(process.execPath, ['--input-type=module', '-e', script, file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    await Promise.race([new Promise((resolve, reject) => {
+      child.stdout.on('data', (chunk) => { if (chunk.toString().includes('claimed')) resolve(); });
+      child.on('exit', (code) => reject(new Error(`host exited ${code}`)));
+    }), new Promise((_, reject) => setTimeout(() => reject(new Error('host did not claim')), 3000))]);
+    child.kill('SIGKILL');
+    await new Promise((resolve) => child.once('close', resolve));
+    let recoveries = 0;
+    const coordinator = new RuntimeShutdownCoordinator({ lifecycle: new RuntimeLifecycleManager(), admission: new RuntimeShutdownAdmission() });
+    const failover = new RuntimeFailoverKernel({ supervisor: new RuntimeSupervisorKernel({ components: { service: () => ({ state: 'failed' }) } }),
+      store: new FileFailoverStore(file), owner: 'replacement', leaseMs: 1000, renewEveryMs: 100,
+      recover: async () => { recoveries++; return 'recovered'; } });
+    const host = new RuntimeDeploymentHost({ coordinator, failover, name: 'service', incidentId: () => 'incident', intervalMs: 25 });
+    await host.start();
+    try { await eventually(() => recoveries === 1, 4000); }
+    finally { await host.shutdown(); }
+  } finally { child?.kill('SIGKILL'); await rm(directory, { recursive: true, force: true }); }
 });

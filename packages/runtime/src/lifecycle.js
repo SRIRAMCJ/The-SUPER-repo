@@ -40,6 +40,7 @@ export class RuntimeLifecycleManager {
 
   async start() {
     this.assertState(['bootstrap', 'stopped', 'failed'], 'start');
+    if (this.state !== 'bootstrap') await this.transition('bootstrap', 'restart');
     await this.transition('initializing', 'start');
     try {
       for (const component of orderComponents(this.components)) await this.invoke(component, 'start');

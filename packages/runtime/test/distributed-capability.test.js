@@ -70,6 +70,7 @@ test('deduplicates concurrent duplicate deliveries with a single handler executi
   assert.deepEqual(a, b);
   assert.equal(gate.listExecutions().length, 1);
   await assert.rejects(gate.execute({ ...request, input: { changed: true } }), { code: 'IDEMPOTENCY_CONFLICT' });
+  await assert.rejects(gate.execute({ ...request, securityContext: { trustLevel: 'untrusted' } }), { code: 'IDEMPOTENCY_CONFLICT' });
 });
 
 test('rejects stale owners from committing after lease fencing changes', async () => {

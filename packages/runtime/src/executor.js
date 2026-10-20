@@ -2,14 +2,16 @@ import { createExecutionId } from './events.js';
 import { ExecutionCancellationRegistry } from './cancellation.js';
 
 export class ExecutionEngine {
-  constructor({ registry, events = null, verifier = null, policy = null, clock = () => new Date(), cancellation = new ExecutionCancellationRegistry() }) {
+  constructor({ registry, events = null, verifier = null, policy = null, shutdownAdmission = null, clock = () => new Date(), cancellation = new ExecutionCancellationRegistry() }) {
     if (!registry) throw new TypeError('ExecutionEngine requires a capability registry');
+    if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     this.registry = registry;
     this.events = events;
     this.verifier = verifier;
     this.policy = policy;
     this.clock = clock;
     this.cancellation = cancellation;
+    this.shutdownAdmission = shutdownAdmission;
   }
 
   cancel(executionId, reason = 'Execution cancelled') {
@@ -36,14 +38,28 @@ export class ExecutionEngine {
       const error = { code: 'EXECUTION_CANCELLED', message: 'Execution cancelled before dispatch', retryable: false };
       return { executionId, capabilityId, status: 'failed', startedAt, finishedAt: this.clock().toISOString(), error };
     }
-    this.#emit({ type:'execution.started', executionId, capabilityId, status:'started', data:{ input, context } });
+    let shutdownLease = null;
+    if (this.shutdownAdmission) {
+      try { shutdownLease = this.shutdownAdmission.admit(executionId); }
+      catch (error) {
+        const failure = { code: error.code ?? 'ADMISSION_CLOSED', message: error.message, retryable: true };
+        this.#emit({ type: 'execution.denied', executionId, capabilityId, status: 'denied', error: failure });
+        return { executionId, capabilityId, status: 'failed', startedAt, finishedAt: this.clock().toISOString(), error: failure };
+      }
+    }
+    let handlerPending = false;
+    let callerFinished = false;
+    const releaseAdmission = () => { if (shutdownLease) { this.shutdownAdmission.release(shutdownLease); shutdownLease = null; } };
     const controller = new AbortController();
-    const cancellation = this.cancellation.register(executionId, controller);
+    let cancellation;
     let removeExternalAbort = null;
     try {
+      cancellation = this.cancellation.register(executionId, controller);
+      this.#emit({ type:'execution.started', executionId, capabilityId, status:'started', data:{ input, context } });
       const externalCancellation = externalSignalPromise(context.signal, controller, cancellationReason(context.signal));
       removeExternalAbort = externalCancellation.cleanup;
       const timeoutMs = Number.isFinite(manifest.timeoutSeconds) ? manifest.timeoutSeconds * 1000 : null;
+      handlerPending = true;
       const handlerPromise = Promise.resolve().then(() => {
         if (controller.signal.aborted) throw controller.signal.reason ?? Object.assign(new Error('Execution cancelled'), { code: 'EXECUTION_CANCELLED' });
         return handler(input, {
@@ -54,6 +70,8 @@ export class ExecutionEngine {
         emit: (data) => this.#emit({ type:'execution.progress', executionId, capabilityId, status:'progress', data })
         });
       });
+      const settle = () => { handlerPending = false; if (callerFinished) releaseAdmission(); };
+      handlerPromise.then(settle, settle);
       const output = timeoutMs
         ? await withTimeout(handlerPromise, timeoutMs, controller, manifest.id, cancellation, externalCancellation.promise)
         : await Promise.race([handlerPromise, cancellation, externalCancellation.promise]);
@@ -73,8 +91,10 @@ export class ExecutionEngine {
       this.#emit({ type:'execution.failed', executionId, capabilityId, status:'failed', error:normalized });
       return { executionId, capabilityId, status:'failed', startedAt, finishedAt:this.clock().toISOString(), error:normalized };
     } finally {
+      callerFinished = true;
+      if (!handlerPending) releaseAdmission();
       removeExternalAbort?.();
-      this.cancellation.unregister(executionId);
+      if (cancellation) this.cancellation.unregister(executionId);
     }
   }
 

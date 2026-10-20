@@ -15,7 +15,7 @@ This is a delivery sequence, not a claim that the full platform is complete. Eac
 
 Work on a module in focused PRs rather than merging a historical stack wholesale. If an older PR's behavior is fully replaced and verified, close it with its replacement linked. Do not equate passing unit tests with cross-process guarantees or production readiness.
 
-Current phase 1 progress: local coordination is integrated through #121, bounded readiness through #122, resource reservations through #123, tool execution admission through #124, and validated non-secret configuration through #125. The local shutdown admission gate now closes tool dispatch on drain and keeps leases until handlers settle. Measured resource enforcement, shutdown integration for other execution paths, process signal wiring, and failover remain pending.
+Current phase 1 progress: local coordination is integrated through #121, bounded readiness through #122, resource reservations through #123, tool execution admission through #124, and validated non-secret configuration through #125. The local shutdown admission gate closes tool dispatch and central capability execution on drain and keeps leases until handlers settle. Measured resource enforcement, other execution paths, process signal wiring, and failover remain pending.
 
 Runtime configuration is limited to validated, non-secret settings with monotonic versions and atomic reload. Secret-shaped fields are rejected; credentials require a separate secret provider and must not enter configuration snapshots or history.
 

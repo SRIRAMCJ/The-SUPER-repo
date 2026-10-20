@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { FileFailoverStore } from '../src/failover-store.js';
@@ -72,4 +72,15 @@ test('parent abort returns promptly without committing recovery', () => fixture(
   const result = await instance.attempt('gateway', 'incident', { signal: controller.signal });
   assert.equal(result.status, 'failed');
   assert.equal(result.error.code, 'RECOVERY_CANCELLED');
+}));
+
+test('recovery writes a file effect through the same durable fence', () => fixture(async (file) => {
+  const store = new FileFailoverStore(file);
+  const destination = path.join(path.dirname(file), 'effect.json');
+  const instance = kernel(file, async ({ fence }) => {
+    await store.writeFencedJson(fence.key, fence, destination, { incidentId: fence.incidentId, epoch: fence.epoch });
+    return 'applied';
+  }, 'a', { store });
+  assert.equal((await instance.attempt('gateway', 'first')).status, 'succeeded');
+  assert.deepEqual(JSON.parse(await readFile(destination, 'utf8')), { incidentId: 'first', epoch: 1 });
 }));

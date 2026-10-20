@@ -5,13 +5,14 @@ export class ToolRuntime {
   #records = new Map();
   #active = new Set();
 
-  constructor({ registry, policyEngine = null, securityGate = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
+  constructor({ registry, policyEngine = null, securityGate = null, resourceGovernance = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
     if (!registry || typeof registry.require !== 'function') throw new TypeError('ToolRuntime requires a capability registry');
     if (policyEngine && typeof policyEngine.authorize !== 'function') throw new TypeError('policyEngine must expose authorize()');
     if (securityGate && typeof securityGate.authorize !== 'function') throw new TypeError('securityGate must expose authorize()');
+    if (resourceGovernance && (typeof resourceGovernance.admit !== 'function' || typeof resourceGovernance.release !== 'function')) throw new TypeError('resourceGovernance must expose admit() and release()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
-    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
+    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.resourceGovernance = resourceGovernance; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
   }
 
   async execute(toolId, input = {}, context = {}) {
@@ -25,6 +26,8 @@ export class ToolRuntime {
     let handlerPending = false;
     let callerFinished = false;
     let startedAt = null;
+    let reserved = false;
+    const releaseReservation = () => { if (reserved) { reserved = false; this.resourceGovernance.release(executionId); } };
     const controller = new AbortController();
     try {
       let entry;
@@ -43,6 +46,11 @@ export class ToolRuntime {
       if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));
       const parentSignal = context.signal;
       if (parentSignal?.aborted) return this.#record(failure('CANCELLED', 'Tool cancelled before dispatch', executionId));
+      if (this.resourceGovernance) {
+        const decision = this.resourceGovernance.admit({ executionId, request: entry.manifest.resourceRequest ?? { concurrency: 1 } });
+        if (decision?.allowed !== true) return this.#record(failure('RESOURCE_DENIED', `Tool resource reservation denied: ${decision?.resource ?? 'unknown'}`, executionId));
+        reserved = true;
+      }
       if (parentSignal) {
         const abort = () => controller.abort(Object.assign(new Error('Tool execution cancelled'), { code: 'CANCELLED' }));
         parentSignal.addEventListener('abort', abort, { once: true });
@@ -60,7 +68,7 @@ export class ToolRuntime {
         if (controller.signal.aborted) throw controller.signal.reason;
         return entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
       });
-      const settle = () => { handlerPending = false; if (callerFinished) this.#active.delete(executionId); };
+      const settle = () => { handlerPending = false; releaseReservation(); if (callerFinished) this.#active.delete(executionId); };
       // Keep an uncooperative handler's ID reserved even after the caller times out.
       invocation.then(settle, settle);
       const value = await Promise.race([invocation, cancelled]);
@@ -72,7 +80,7 @@ export class ToolRuntime {
     } finally {
       callerFinished = true;
       clearTimeout(timer); detach(); removeAbort();
-      if (!handlerPending) this.#active.delete(executionId);
+      if (!handlerPending) { releaseReservation(); this.#active.delete(executionId); }
     }
   }
 

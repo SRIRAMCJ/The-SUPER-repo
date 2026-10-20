@@ -15,4 +15,6 @@ This is a delivery sequence, not a claim that the full platform is complete. Eac
 
 Work on a module in focused PRs rather than merging a historical stack wholesale. If an older PR's behavior is fully replaced and verified, close it with its replacement linked. Do not equate passing unit tests with cross-process guarantees or production readiness.
 
-Current phase 1 progress: local coordination is integrated through #121; readiness with bounded probes is the next slice. Shared CI must exercise every supported package, including reverse engineering.
+Current phase 1 progress: local coordination is integrated through #121 and bounded readiness through #122. Resource reservations are the next slice; execution admission wiring, measured resource enforcement, safe shutdown, and failover remain pending.
+
+`RuntimeResourceGovernance` tracks in-process reservations. Its `cpuMs`, `memoryBytes`, and `networkRequests` values represent requested budgets, not measured consumption or OS-enforced limits. A later execution-admission module must reserve before dispatch and release in `finally`; sandbox and worker limits must enforce actual usage. Do not use independent instances as a shared quota.

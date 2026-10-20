@@ -4,14 +4,16 @@ import { ExecutionCancellationRegistry } from './cancellation.js';
 const VALID_STATUSES = new Set(['succeeded', 'failed', 'skipped']);
 
 export class TaskGraphExecutor {
-  constructor({ executeTask, events = null, clock = () => new Date(), stateStore = null, cancellation = new ExecutionCancellationRegistry() } = {}) {
+  constructor({ executeTask, events = null, clock = () => new Date(), stateStore = null, cancellation = new ExecutionCancellationRegistry(), shutdownAdmission = null } = {}) {
     if (typeof executeTask !== 'function') throw new TypeError('TaskGraphExecutor requires executeTask');
     if (!cancellation || typeof cancellation.register !== 'function' || typeof cancellation.cancel !== 'function') throw new TypeError('TaskGraphExecutor cancellation must expose register and cancel');
+    if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     this.executeTask = executeTask;
     this.events = events;
     this.clock = clock;
     this.stateStore = stateStore;
     this.cancellation = cancellation;
+    this.shutdownAdmission = shutdownAdmission;
   }
 
   cancel(executionId, reason = 'Task graph execution cancelled') { return this.cancellation.cancel(executionId, reason); }
@@ -20,11 +22,15 @@ export class TaskGraphExecutor {
     validateTaskPlan(plan);
     const config = normalizeOptions(options, plan.taskCount);
     const executionId = context.taskGraphExecutionId ?? context.executionId ?? createExecutionId();
-    return this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false);
+    return this.#withAdmission(executionId, plan, (activeTasks) => this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false, activeTasks));
   }
 
   async resume(plan, executionId, context = {}, options = {}) {
     validateTaskPlan(plan);
+    return this.#withAdmission(executionId, plan, (activeTasks) => this.#resume(plan, executionId, context, options, activeTasks));
+  }
+
+  async #resume(plan, executionId, context, options, activeTasks) {
     if (!this.stateStore) throw taskGraphFailure('EXECUTION_STATE_UNAVAILABLE', 'Execution state store is required for task graph resume');
     const state = await this.stateStore.get(executionId);
     if (!state) return failure(executionId, plan, 'EXECUTION_STATE_NOT_FOUND', `Execution state not found: ${executionId}`);
@@ -41,10 +47,25 @@ export class TaskGraphExecutor {
     } catch (error) {
       return failure(executionId, plan, error?.code ?? 'EXECUTION_STATE_CONFLICT', error instanceof Error ? error.message : String(error), Boolean(error?.retryable));
     }
-    return this.#run(plan, executionId, state.startedAt ?? this.clock().toISOString(), state.input ?? {}, context, config, priorResults, claimed.attempt, true);
+    return this.#run(plan, executionId, state.startedAt ?? this.clock().toISOString(), state.input ?? {}, context, config, priorResults, claimed.attempt, true, activeTasks);
   }
 
-  async #run(plan, executionId, startedAt, input, context, config, results, attempt, resumed) {
+  async #withAdmission(executionId, plan, run) {
+    if (!this.shutdownAdmission) return run(new Set());
+    let lease;
+    try { lease = this.shutdownAdmission.admit(executionId); }
+    catch (error) { return failure(executionId, plan, error.code ?? 'ADMISSION_CLOSED', error instanceof Error ? error.message : String(error)); }
+    const activeTasks = new Set();
+    try { return await run(activeTasks); }
+    finally {
+      // A cancellation can finish the graph before a handler observes the signal.
+      // Retain its lease without delaying the caller's cancellation result.
+      if (activeTasks.size) Promise.allSettled([...activeTasks]).then(() => this.shutdownAdmission.release(lease));
+      else this.shutdownAdmission.release(lease);
+    }
+  }
+
+  async #run(plan, executionId, startedAt, input, context, config, results, attempt, resumed, activeTasks) {
     const byId = new Map(plan.tasks.map((task) => [task.id, task]));
     const pending = new Set(plan.order.filter((id) => !results.has(id)));
     if (this.stateStore && !resumed) await this.stateStore.create({ schemaVersion: '0.1.0', type: 'execution-state', executionId, kind: 'task-graph', status: 'running', plan, input, results: [], strategy: config.strategy, maxConcurrency: config.maxConcurrency, failFast: config.failFast, attempt, startedAt });
@@ -63,7 +84,9 @@ export class TaskGraphExecutor {
       const taskContext = { ...context, executionId, taskId: task.id, signal: controller.signal, taskResults: Object.fromEntries(results) };
       this.events?.emit({ type: 'task.started', executionId, taskId: task.id, status: 'started', data: { dependsOn: task.dependsOn, attempt } });
       try {
-        const taskPromise = (config.executeTask ?? this.executeTask)(task, taskInput, taskContext);
+        const taskPromise = Promise.resolve().then(() => (config.executeTask ?? this.executeTask)(task, taskInput, taskContext));
+        activeTasks.add(taskPromise);
+        taskPromise.then(() => activeTasks.delete(taskPromise), () => activeTasks.delete(taskPromise));
         const normalized = normalizeResult(await Promise.race([taskPromise, cancelPromise]));
         results.set(task.id, normalized);
         const cancelled = normalized.error?.code === 'EXECUTION_CANCELLED';

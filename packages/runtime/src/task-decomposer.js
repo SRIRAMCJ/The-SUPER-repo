@@ -1,3 +1,5 @@
+import { taskCapabilities } from './task-capabilities.js';
+
 export class TaskDecomposer {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
@@ -56,12 +58,14 @@ function normalizeTask(task, index) {
   if (task.dependsOn !== undefined && (!Array.isArray(task.dependsOn) || task.dependsOn.some((value) => typeof value !== 'string' || !value.trim()))) {
     throw failure('TASK_DEPENDENCY_INVALID', `Task ${id} has invalid dependsOn`);
   }
+  const capabilities = taskCapabilities(task);
   return {
     id,
     title,
     description: typeof task.description === 'string' ? task.description.trim() : '',
     dependsOn: [...new Set((task.dependsOn ?? []).map((value) => value.trim()))].sort(),
-    agent: task.agent ?? null,
+    agent: task.agent?.trim() ?? null,
+    capabilities: Object.freeze(capabilities),
     priority: Number.isInteger(task.priority) ? task.priority : 0,
     input: task.input ?? null
   };

@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { writeAtomicJson } from './atomic-json.js';
 import path from 'node:path';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'rolled_back']);
@@ -41,78 +42,60 @@ export class ExecutionStateStore {
 
   async restore(states) {
     if (!Array.isArray(states)) throw new TypeError('Execution states must be an array');
-    this.#states.clear();
+    const restored = new Map();
     for (const state of states) {
       validateStateIdentity(state);
       if (!Number.isInteger(state.version) || state.version < 0) throw new TypeError(`Invalid execution state version: ${state.executionId}`);
-      this.#states.set(state.executionId, freezeState(state));
+      if (restored.has(state.executionId)) throw new TypeError(`Duplicate execution state: ${state.executionId}`);
+      restored.set(state.executionId, freezeState(state));
     }
-    return this.list();
+    this.#states = restored;
+    return [...this.#states.values()].map(clone);
   }
 }
 
 export class FileExecutionStateStore extends ExecutionStateStore {
+  #loadPromise = null;
+  #queue = Promise.resolve();
   constructor(filePath) {
     super();
     if (typeof filePath !== 'string' || !filePath) throw new TypeError('FileExecutionStateStore requires a file path');
     this.filePath = path.resolve(filePath);
-    this.loaded = false;
-    this.writeQueue = Promise.resolve();
   }
 
-  async #load() {
-    if (this.loaded) return;
-    this.loaded = true;
-    try {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8'));
-      if (!Array.isArray(parsed)) throw new Error('Execution state file must contain an array');
+  #load() {
+    if (!this.#loadPromise) this.#loadPromise = (async () => {
+      let parsed;
+      try { parsed = JSON.parse(await readFile(this.filePath, 'utf8')); }
+      catch (error) { if (error?.code === 'ENOENT') parsed = []; else throw error; }
       await super.restore(parsed);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
+    })();
+    return this.#loadPromise;
   }
 
-  async #persist() {
-    const snapshot = await super.list();
-    this.writeQueue = this.writeQueue.then(async () => {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
-      const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
-      await writeFile(temporaryPath, JSON.stringify(snapshot, null, 2), 'utf8');
-      await rename(temporaryPath, this.filePath);
+  #run(operation, persist = false) {
+    const result = this.#queue.then(async () => {
+      await this.#load();
+      const before = persist ? await super.list() : null;
+      try {
+        const value = await operation();
+        if (persist) await writeAtomicJson(this.filePath, await super.list());
+        return value;
+      } catch (error) {
+        if (persist) await super.restore(before);
+        throw error;
+      }
     });
-    return this.writeQueue;
-  }
-
-  async create(state) {
-    await this.#load();
-    const result = await super.create(state);
-    await this.#persist();
+    this.#queue = result.catch(() => {});
     return result;
   }
 
-  async get(executionId) {
-    await this.#load();
-    return super.get(executionId);
-  }
-
-  async update(executionId, patch, expectedVersion = null) {
-    await this.#load();
-    const result = await super.update(executionId, patch, expectedVersion);
-    await this.#persist();
-    return result;
-  }
-
-  async list(filter = {}) {
-    await this.#load();
-    return super.list(filter);
-  }
-
-  async remove(executionId) {
-    await this.#load();
-    const result = await super.remove(executionId);
-    await this.#persist();
-    return result;
-  }
+  create(state) { const snapshot = clone(state); return this.#run(() => super.create(snapshot), true); }
+  get(executionId) { return this.#run(() => super.get(executionId)); }
+  update(executionId, patch, expectedVersion = null) { const snapshot = clone(patch); return this.#run(() => super.update(executionId, snapshot, expectedVersion), true); }
+  list(filter = {}) { return this.#run(() => super.list(filter)); }
+  remove(executionId) { return this.#run(() => super.remove(executionId), true); }
+  restore(states) { const snapshot = clone(states); return this.#run(() => super.restore(snapshot), true); }
 }
 
 export function isTerminalExecutionStatus(status) {

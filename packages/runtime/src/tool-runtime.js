@@ -3,6 +3,7 @@ const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
 
 export class ToolRuntime {
   #records = new Map();
+  #active = new Set();
 
   constructor({ registry, policyEngine = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
     if (!registry || typeof registry.require !== 'function') throw new TypeError('ToolRuntime requires a capability registry');
@@ -14,50 +15,72 @@ export class ToolRuntime {
 
   async execute(toolId, input = {}, context = {}) {
     const executionId = context.executionId ?? this.idFactory(toolId);
-    if (this.#records.has(executionId)) return failure('EXECUTION_CONFLICT', `Execution already exists: ${executionId}`, executionId);
-    let entry;
-    try { entry = this.registry.require(toolId); } catch (error) { return this.#record(failure('TOOL_UNAVAILABLE', errorMessage(error), executionId)); }
-    if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId));
-    const policy = this.policyEngine?.authorize({ id: toolId, name: entry.manifest.name, risk: entry.manifest.risk ?? 'none', permissions: entry.manifest.permissions ?? [] }, context);
-    if (policy && policy.allowed !== true) return this.#record(failure('FORBIDDEN', policy.reason ?? 'Tool execution denied', executionId));
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));
-
-    const controller = new AbortController();
-    const parentSignal = context.signal;
-    let detach = null;
-    if (parentSignal) {
-      if (parentSignal.aborted) controller.abort(parentSignal.reason);
-      else { const abort = () => controller.abort(parentSignal.reason); parentSignal.addEventListener('abort', abort, { once: true }); detach = () => parentSignal.removeEventListener('abort', abort); }
-    }
+    if (this.#active.has(executionId) || this.#records.has(executionId)) return failure('EXECUTION_CONFLICT', `Execution already exists: ${executionId}`, executionId);
     const timeoutMs = normalizeTimeout(context.timeoutMs);
-    let timer = null;
-    if (timeoutMs !== null) timer = setTimeout(() => controller.abort(new Error('Tool execution timed out')), timeoutMs);
-    const startedAt = this.clock().toISOString();
+    this.#active.add(executionId);
+    let detach = () => {};
+    let timer;
+    let removeAbort = () => {};
+    let handlerPending = false;
+    let callerFinished = false;
+    let startedAt = null;
+    const controller = new AbortController();
     try {
-      const value = await entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
-      if (controller.signal.aborted) return this.#record(failure(isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED', errorMessage(controller.signal.reason), executionId, startedAt));
+      let entry;
+      try { entry = this.registry.require(toolId); } catch (error) { return this.#record(failure('TOOL_UNAVAILABLE', errorMessage(error), executionId)); }
+      if (entry.manifest.kind !== 'tool') return this.#record(failure('INVALID_TOOL_KIND', `Capability is not a tool: ${toolId}`, executionId));
+      if (this.policyEngine) {
+        const policy = this.policyEngine.authorize(entry.manifest, context);
+        if (policy?.then) Promise.resolve(policy).catch(() => {});
+        if (policy?.allowed !== true) return this.#record(failure('FORBIDDEN', policy?.reason ?? 'Tool execution denied', executionId));
+      }
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));
+      const parentSignal = context.signal;
+      if (parentSignal?.aborted) return this.#record(failure('CANCELLED', 'Tool cancelled before dispatch', executionId));
+      if (parentSignal) {
+        const abort = () => controller.abort(Object.assign(new Error('Tool execution cancelled'), { code: 'CANCELLED' }));
+        parentSignal.addEventListener('abort', abort, { once: true });
+        detach = () => parentSignal.removeEventListener('abort', abort);
+      }
+      const cancelled = new Promise((_, reject) => {
+        const abort = () => reject(controller.signal.reason);
+        controller.signal.addEventListener('abort', abort, { once: true });
+        removeAbort = () => controller.signal.removeEventListener('abort', abort);
+      });
+      if (timeoutMs !== null) timer = setTimeout(() => controller.abort(Object.assign(new Error('Tool execution timed out'), { code: 'TIMED_OUT' })), timeoutMs);
+      startedAt = this.clock().toISOString();
+      handlerPending = true;
+      const invocation = Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw controller.signal.reason;
+        return entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
+      });
+      const settle = () => { handlerPending = false; if (callerFinished) this.#active.delete(executionId); };
+      // Keep an uncooperative handler's ID reserved even after the caller times out.
+      invocation.then(settle, settle);
+      const value = await Promise.race([invocation, cancelled]);
+      if (controller.signal.aborted) throw controller.signal.reason;
       return this.#record(success(executionId, startedAt, this.clock().toISOString(), value));
     } catch (error) {
-      const code = controller.signal.aborted ? (isTimeout(controller.signal.reason) ? 'TIMED_OUT' : 'CANCELLED') : 'TOOL_FAILED';
+      const code = controller.signal.aborted ? (controller.signal.reason?.code === 'TIMED_OUT' ? 'TIMED_OUT' : 'CANCELLED') : 'TOOL_FAILED';
       return this.#record(failure(code, errorMessage(error), executionId, startedAt));
-    } finally { if (timer) clearTimeout(timer); detach?.(); }
+    } finally {
+      callerFinished = true;
+      clearTimeout(timer); detach(); removeAbort();
+      if (!handlerPending) this.#active.delete(executionId);
+    }
   }
 
   getExecution(executionId) { const record = this.#records.get(executionId); return record ? structuredClone(record) : null; }
-  listExecutions(limit = this.maxRecords) { if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer'); return [...this.#records.values()].slice(-limit).map(structuredClone); }
-
+  listExecutions(limit = this.maxRecords) { if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer'); return [...this.#records.values()].slice(-limit).map((record) => structuredClone(record)); }
   #record(record) {
-    this.#records.set(record.executionId, Object.freeze(structuredClone(record)));
+    this.#records.set(record.executionId, structuredClone(record));
     while (this.#records.size > this.maxRecords) this.#records.delete(this.#records.keys().next().value);
     return structuredClone(record);
   }
 }
-
 function success(executionId, startedAt, completedAt, output) { return { schemaVersion: SCHEMA_VERSION, executionId, status: 'succeeded', startedAt, completedAt, output: structuredClone(output) }; }
 function failure(code, message, executionId, startedAt = null) { return { schemaVersion: SCHEMA_VERSION, executionId, status: code === 'CANCELLED' ? 'cancelled' : code === 'TIMED_OUT' ? 'timed_out' : 'failed', error: { code, message }, startedAt, completedAt: new Date().toISOString() }; }
 function normalizeTimeout(value) { if (value === undefined || value === null) return null; if (!Number.isFinite(value) || value < 1) throw new TypeError('timeoutMs must be a positive finite number'); return value; }
-function isTimeout(reason) { return reason instanceof Error && /timed out/i.test(reason.message); }
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }
-function defaultExecutionId(toolId) { return `tool_${toolId.replaceAll('/', '_')}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`; }
-
+function defaultExecutionId(toolId) { return `tool_${toolId.replaceAll('/', '_')}_${crypto.randomUUID()}`; }
 export { SCHEMA_VERSION as TOOL_RUNTIME_SCHEMA_VERSION, TERMINAL as TOOL_TERMINAL_STATES };

@@ -1,3 +1,5 @@
+import { collectTaskCapabilities, taskCapabilities } from './task-capabilities.js';
+
 const SCHEMA_VERSION = '0.1.0';
 const DECISIONS = new Set(['ready', 'blocked', 'invalid']);
 
@@ -29,10 +31,11 @@ export class AgentPlanningKernel {
       if (!tasks.length) return invalid(normalized.goal, 'TASKS_MISSING', 'No executable tasks could be derived from the goal', startedAt);
 
       const decomposition = this.decomposer.decompose({ goal: normalized.goal, tasks });
-      const requiredCapabilities = collectCapabilities(decomposition.tasks);
+      const requiredCapabilities = collectTaskCapabilities(decomposition.tasks);
       const unresolved = resolveCapabilities(requiredCapabilities, this.registry);
       const governance = this.governance ? authorizeTasks(decomposition.tasks, this.governance, normalized.context) : [];
-      const blocked = [...unresolved, ...governance.filter((item) => !item.allowed).map((item) => ({
+      const missingExecutors = decomposition.tasks.filter((task) => taskCapabilities(task).length === 0).map((task) => ({ code: 'TASK_CAPABILITY_MISSING', taskId: task.id, message: 'Task has no executable capability' }));
+      const blocked = [...missingExecutors, ...unresolved, ...governance.filter((item) => item.allowed !== true).map((item) => ({
         code: 'GOVERNANCE_DENIED', taskId: item.taskId, capabilityId: item.operationId, message: item.reason
       }))];
       const decision = blocked.length ? 'blocked' : 'ready';
@@ -89,20 +92,21 @@ function deriveTasks(capabilityPlan, request) {
   return [task];
 }
 
-function collectCapabilities(tasks) {
-  return [...new Set(tasks.flatMap((task) => Array.isArray(task.capabilities) ? task.capabilities : task.agent ? [task.agent] : []))].sort();
-}
-
 function resolveCapabilities(capabilities, registry) {
   if (!registry) return [];
-  return capabilities.filter((id) => !registry.resolve(id)).map((id) => ({ code: 'CAPABILITY_MISSING', capabilityId: id, message: `Required capability is not registered: ${id}` }));
+  return capabilities.flatMap((id) => {
+    const entry = registry.resolve(id);
+    if (!entry) return [{ code: 'CAPABILITY_MISSING', capabilityId: id, message: `Required capability is not registered: ${id}` }];
+    if (['disabled', 'deprecated'].includes(entry.manifest?.status)) return [{ code: 'CAPABILITY_UNAVAILABLE', capabilityId: id, message: `Required capability is unavailable: ${id}` }];
+    return [];
+  });
 }
 
 function authorizeTasks(tasks, governance, context) {
-  return tasks.flatMap((task) => {
-    const ids = Array.isArray(task.capabilities) && task.capabilities.length ? task.capabilities : task.agent ? [task.agent] : [];
-    return ids.map((operationId) => ({ taskId: task.id, ...governance.authorize({ id: operationId, classification: 'control' }, context) }));
-  });
+  return tasks.flatMap((task) => taskCapabilities(task).map((operationId) => {
+    const result = governance.authorize({ id: operationId, classification: 'control' }, context);
+    return { allowed: result?.allowed === true, reason: result?.reason ?? 'Governance did not explicitly authorize this task', taskId: task.id, operationId };
+  }));
 }
 
 function defaultPlanId(goal, order) {

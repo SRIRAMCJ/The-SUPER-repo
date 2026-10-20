@@ -13,7 +13,7 @@ function controlPlane() {
     getExecutions: (filter = {}) => [{ executionId: 'exec-1', status: 'running', ...filter }],
     getEvolution: async () => ({ active: 0, controls: [] }),
     snapshot: async () => ({ type: 'runtime-control-plane-snapshot', health: { status: 'healthy' } }),
-    cancelExecution: async (id, reason) => ({ executionId: id, reason, status: 'cancelled' })
+    cancelExecution: async (id, reason) => ({ type: 'control-action-result', action: 'cancel_execution', executionId: id, result: { executionId: id, reason, status: 'cancelled' } })
   };
 }
 

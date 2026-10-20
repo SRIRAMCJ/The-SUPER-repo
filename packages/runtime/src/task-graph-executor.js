@@ -17,14 +17,14 @@ export class TaskGraphExecutor {
   cancel(executionId, reason = 'Task graph execution cancelled') { return this.cancellation.cancel(executionId, reason); }
 
   async execute(plan, input = {}, context = {}, options = {}) {
-    validatePlan(plan);
+    validateTaskPlan(plan);
     const config = normalizeOptions(options, plan.taskCount);
     const executionId = context.taskGraphExecutionId ?? context.executionId ?? createExecutionId();
     return this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false);
   }
 
   async resume(plan, executionId, context = {}, options = {}) {
-    validatePlan(plan);
+    validateTaskPlan(plan);
     if (!this.stateStore) throw taskGraphFailure('EXECUTION_STATE_UNAVAILABLE', 'Execution state store is required for task graph resume');
     const state = await this.stateStore.get(executionId);
     if (!state) return failure(executionId, plan, 'EXECUTION_STATE_NOT_FOUND', `Execution state not found: ${executionId}`);
@@ -126,7 +126,7 @@ function finish(plan, executionId, startedAt, config, results, resumed, attempt,
 
 function orderedResults(plan, results) { return plan.order.filter((id) => results.has(id)).map((id) => ({ taskId: id, ...results.get(id) })); }
 
-function validatePlan(plan) {
+export function validateTaskPlan(plan) {
   if (!plan || plan.type !== 'task-plan' || plan.schemaVersion !== '0.1.0' || !Array.isArray(plan.tasks) || !Array.isArray(plan.order)) throw taskGraphFailure('TASK_PLAN_INVALID', 'Invalid task plan');
   if (!Number.isInteger(plan.taskCount) || plan.taskCount <= 0 || plan.taskCount !== plan.tasks.length || plan.order.length !== plan.tasks.length) throw taskGraphFailure('TASK_PLAN_INVALID', 'Task plan count/order mismatch');
   const ids = new Set(plan.tasks.map((task) => task?.id));

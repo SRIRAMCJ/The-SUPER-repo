@@ -26,7 +26,7 @@ test('runtime diagnostics reports required and optional runtime components', asy
   assert.ok(report.summary.checks >= 5);
   assert.equal(report.runtime.platform, process.platform);
   assert.ok(report.checks.some((check) => check.id === 'component.observability' && check.status === 'pass'));
-  assert.ok(report.checks.some((check) => check.id === 'component.state-store' && check.status === 'warning'));
+  assert.ok(report.checks.some((check) => check.id === 'component.state-store' && check.status === 'not_configured'));
   controlPlane.close();
 });
 

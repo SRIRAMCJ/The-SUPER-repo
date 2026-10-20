@@ -1,3 +1,6 @@
+import { collectTaskCapabilities, taskCapabilities } from './task-capabilities.js';
+import { validateTaskPlan } from './task-graph-executor.js';
+
 const SCHEMA_VERSION = '0.1.0';
 const DECISIONS = new Set(['ready', 'blocked', 'invalid']);
 
@@ -12,27 +15,28 @@ export class AgentExecutionAdmission {
     this.registry = registry; this.governance = governance; this.taskGraphExecutor = taskGraphExecutor; this.executionEngine = executionEngine; this.clock = clock; this.idFactory = idFactory; this.maxPlanAgeMs = maxPlanAgeMs; this.events = events;
   }
   admit(plan, context = {}) {
-    const timestamp = this.clock().toISOString(); const reasons = validatePlan(plan, this.clock(), this.maxPlanAgeMs);
+    const timestamp = this.clock().toISOString(); const reasons = validatePlan(plan, Date.parse(timestamp), this.maxPlanAgeMs);
     if (reasons.length) return decision('invalid', plan?.planId ?? null, timestamp, reasons);
     if (plan.executionDecision?.status !== 'ready') return decision(plan.executionDecision?.status === 'blocked' ? 'blocked' : 'invalid', plan.planId, timestamp, plan.executionDecision?.reasons?.length ? clone(plan.executionDecision.reasons) : [{ code: 'PLAN_NOT_READY', message: 'Plan is not ready for execution' }]);
     const capabilityReasons = [];
-    for (const capabilityId of plan.requiredCapabilities ?? collectCapabilities(plan.graph.tasks)) {
+    for (const capabilityId of [...new Set([...plan.requiredCapabilities, ...collectTaskCapabilities(plan.graph.tasks)])]) {
       const entry = this.registry.resolve(capabilityId);
       if (!entry) capabilityReasons.push({ code: 'CAPABILITY_MISSING', capabilityId, message: `Required capability is not registered: ${capabilityId}` });
       else if (['disabled', 'deprecated'].includes(entry.manifest?.status)) capabilityReasons.push({ code: 'CAPABILITY_UNAVAILABLE', capabilityId, message: `Required capability is unavailable: ${capabilityId} (${entry.manifest.status})` });
     }
     const governanceReasons = this.governance ? authorizeTasks(plan.graph.tasks, this.governance, context) : [];
-    const blocked = [...capabilityReasons, ...governanceReasons.filter((item) => !item.allowed).map((item) => ({ code: 'GOVERNANCE_DENIED', taskId: item.taskId, capabilityId: item.operationId, message: item.reason }))];
+    const blocked = [...capabilityReasons, ...governanceReasons.filter((item) => item.allowed !== true).map((item) => ({ code: 'GOVERNANCE_DENIED', taskId: item.taskId, capabilityId: item.operationId, message: item.reason }))];
     const result = decision(blocked.length ? 'blocked' : 'ready', plan.planId, timestamp, blocked, governanceReasons.length ? governanceReasons : null);
     this.events?.emit({ type: result.status === 'ready' ? 'agent.execution.admitted' : 'agent.execution.blocked', status: result.status, planId: plan.planId, data: result }); return result;
   }
   async execute(plan, input = {}, context = {}, options = {}) {
+    plan = clone(plan);
     const admission = this.admit(plan, context); if (admission.status !== 'ready') return admission;
     const executionId = context.executionId ?? this.idFactory(plan.planId);
     const envelope = freezeDeep({ schemaVersion: SCHEMA_VERSION, type: 'agent-execution-envelope', executionId, planId: plan.planId, correlationId: context.correlationId ?? executionId, admittedAt: admission.timestamp, integrity: { fingerprint: fingerprint(plan) }, goal: plan.goal, input: clone(input), context: clone(context) });
     const graphPlan = toTaskPlan(plan); this.events?.emit({ type: 'agent.execution.started', executionId, planId: plan.planId, status: 'started', data: { envelope } });
     const executeTask = async (task, taskInput, taskContext) => {
-      const capabilityIds = Array.isArray(task.capabilities) && task.capabilities.length ? task.capabilities : task.agent ? [task.agent] : [];
+      const capabilityIds = taskCapabilities(task);
       if (!capabilityIds.length) return { status: 'failed', error: { code: 'CAPABILITY_MISSING', message: `Task has no executable capability: ${task.id}`, retryable: false } };
       let currentInput = taskInput; let lastResult = null;
       for (const capabilityId of capabilityIds) {
@@ -53,18 +57,32 @@ export class AgentExecutionAdmission {
     }
   }
 }
-function validatePlan(plan, clock, maxPlanAgeMs) {
+function validatePlan(plan, now, maxPlanAgeMs) {
   const reasons = []; if (!plan || plan.type !== 'agent-plan' || plan.schemaVersion !== SCHEMA_VERSION) return [{ code: 'PLAN_SCHEMA_INVALID', message: 'Unsupported or invalid agent plan schema' }];
   if (typeof plan.planId !== 'string' || !plan.planId) reasons.push({ code: 'PLAN_ID_MISSING', message: 'Agent plan requires a planId' });
   if (typeof plan.goal !== 'string' || !plan.goal.trim()) reasons.push({ code: 'PLAN_GOAL_INVALID', message: 'Agent plan requires a non-empty goal' });
   if (!plan.graph || !Array.isArray(plan.graph.tasks) || !Array.isArray(plan.graph.order) || plan.graph.taskCount !== plan.graph.tasks.length || plan.graph.order.length !== plan.graph.tasks.length) reasons.push({ code: 'PLAN_GRAPH_INVALID', message: 'Agent plan graph is inconsistent' });
-  if (!Array.isArray(plan.requiredCapabilities)) reasons.push({ code: 'PLAN_CAPABILITIES_INVALID', message: 'Agent plan requiredCapabilities must be an array' });
-  if (maxPlanAgeMs !== null && typeof plan.createdAt === 'string') { const created = Date.parse(plan.createdAt); const now = clock().getTime(); if (!Number.isFinite(created) || created > now || now - created > maxPlanAgeMs) reasons.push({ code: 'PLAN_STALE', message: 'Agent plan is outside the permitted execution age' }); }
+  if (!Array.isArray(plan.requiredCapabilities) || plan.requiredCapabilities.some((id) => typeof id !== 'string' || !id.trim() || id !== id.trim())) reasons.push({ code: 'PLAN_CAPABILITIES_INVALID', message: 'Agent plan requiredCapabilities must be an array of capability IDs' });
+  if (!reasons.some((reason) => reason.code === 'PLAN_GRAPH_INVALID')) {
+    try {
+      validateTaskPlan({ ...plan.graph, schemaVersion: SCHEMA_VERSION, type: 'task-plan' });
+      for (const task of plan.graph.tasks) if (taskCapabilities(task).length === 0) reasons.push({ code: 'TASK_CAPABILITY_MISSING', taskId: task.id, message: 'Task has no executable capability' });
+    } catch (error) { reasons.push({ code: 'PLAN_GRAPH_INVALID', message: error.message }); }
+  }
+  if (maxPlanAgeMs !== null) { const created = typeof plan.createdAt === 'string' ? Date.parse(plan.createdAt) : NaN; if (!Number.isFinite(created) || created > now || now - created > maxPlanAgeMs) reasons.push({ code: 'PLAN_STALE', message: 'Agent plan is outside the permitted execution age' }); }
   if (plan.integrity?.fingerprint && plan.integrity.fingerprint !== fingerprint(plan)) reasons.push({ code: 'PLAN_INTEGRITY_MISMATCH', message: 'Agent plan integrity fingerprint does not match its contents' }); return reasons;
 }
 function toTaskPlan(plan) { return freezeDeep({ schemaVersion: SCHEMA_VERSION, type: 'task-plan', createdAt: plan.createdAt, goal: plan.goal, taskCount: plan.graph.taskCount, tasks: plan.graph.tasks, order: plan.graph.order }); }
-function collectCapabilities(tasks) { return [...new Set(tasks.flatMap((task) => Array.isArray(task.capabilities) ? task.capabilities : task.agent ? [task.agent] : []))].sort(); }
-function authorizeTasks(tasks, governance, context) { return tasks.flatMap((task) => (Array.isArray(task.capabilities) && task.capabilities.length ? task.capabilities : task.agent ? [task.agent] : []).map((operationId) => ({ taskId: task.id, ...governance.authorize({ id: operationId, classification: 'control' }, context) }))); }
+function authorizeTasks(tasks, governance, context) {
+  return tasks.flatMap((task) => taskCapabilities(task).map((operationId) => {
+    try {
+      const result = governance.authorize({ id: operationId, classification: 'control' }, context);
+      return { allowed: result?.allowed === true, reason: result?.reason ?? 'Governance did not explicitly authorize this task', taskId: task.id, operationId };
+    } catch (error) {
+      return { allowed: false, reason: error instanceof Error ? error.message : String(error), taskId: task.id, operationId };
+    }
+  }));
+}
 function decision(status, planId, timestamp, reasons, governance = null) { return freezeDeep({ schemaVersion: SCHEMA_VERSION, type: 'agent-execution-admission', status, planId, timestamp, reasons: clone(reasons), governance: governance ? clone(governance) : null }); }
 function fingerprint(plan) { return stableHash(JSON.stringify({ schemaVersion: plan.schemaVersion, planId: plan.planId, goal: plan.goal, graph: plan.graph, requiredCapabilities: plan.requiredCapabilities })); }
 function stableHash(input) { let hash = 2166136261; for (let index = 0; index < input.length; index += 1) { hash ^= input.charCodeAt(index); hash = Math.imul(hash, 16777619); } return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`; }

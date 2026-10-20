@@ -34,7 +34,7 @@ test('command bus validates control inputs before dispatch', async () => {
   const { controlPlane, commands } = setup();
   const result = await commands.execute('runtime.cancel', { executionId: '' });
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'COMMAND_FAILED');
+  assert.equal(result.error.code, 'INVALID_INPUT');
   assert.match(result.error.message, /executionId/);
   controlPlane.close();
 });

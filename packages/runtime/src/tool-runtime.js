@@ -5,14 +5,15 @@ export class ToolRuntime {
   #records = new Map();
   #active = new Set();
 
-  constructor({ registry, policyEngine = null, securityGate = null, resourceGovernance = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
+  constructor({ registry, policyEngine = null, securityGate = null, resourceGovernance = null, shutdownAdmission = null, clock = () => new Date(), maxRecords = 1000, idFactory = defaultExecutionId } = {}) {
     if (!registry || typeof registry.require !== 'function') throw new TypeError('ToolRuntime requires a capability registry');
     if (policyEngine && typeof policyEngine.authorize !== 'function') throw new TypeError('policyEngine must expose authorize()');
     if (securityGate && typeof securityGate.authorize !== 'function') throw new TypeError('securityGate must expose authorize()');
     if (resourceGovernance && (typeof resourceGovernance.admit !== 'function' || typeof resourceGovernance.release !== 'function')) throw new TypeError('resourceGovernance must expose admit() and release()');
+    if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     if (typeof clock !== 'function' || typeof idFactory !== 'function') throw new TypeError('clock and idFactory must be functions');
     if (!Number.isInteger(maxRecords) || maxRecords < 1) throw new TypeError('maxRecords must be a positive integer');
-    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.resourceGovernance = resourceGovernance; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
+    this.registry = registry; this.policyEngine = policyEngine; this.securityGate = securityGate; this.resourceGovernance = resourceGovernance; this.shutdownAdmission = shutdownAdmission; this.clock = clock; this.maxRecords = maxRecords; this.idFactory = idFactory;
   }
 
   async execute(toolId, input = {}, context = {}) {
@@ -27,7 +28,9 @@ export class ToolRuntime {
     let callerFinished = false;
     let startedAt = null;
     let reserved = false;
+    let shutdownLease = null;
     const releaseReservation = () => { if (reserved) { reserved = false; this.resourceGovernance.release(executionId); } };
+    const releaseAdmission = () => { if (shutdownLease) { this.shutdownAdmission.release(shutdownLease); shutdownLease = null; } };
     const controller = new AbortController();
     try {
       let entry;
@@ -46,6 +49,10 @@ export class ToolRuntime {
       if (!input || typeof input !== 'object' || Array.isArray(input)) return this.#record(failure('INVALID_INPUT', 'Tool input must be an object', executionId));
       const parentSignal = context.signal;
       if (parentSignal?.aborted) return this.#record(failure('CANCELLED', 'Tool cancelled before dispatch', executionId));
+      if (this.shutdownAdmission) {
+        try { shutdownLease = this.shutdownAdmission.admit(executionId); }
+        catch (error) { return this.#record(failure(error.code ?? 'ADMISSION_CLOSED', errorMessage(error), executionId)); }
+      }
       if (this.resourceGovernance) {
         const decision = this.resourceGovernance.admit({ executionId, request: entry.manifest.resourceRequest ?? { concurrency: 1 } });
         if (decision?.allowed !== true) return this.#record(failure('RESOURCE_DENIED', `Tool resource reservation denied: ${decision?.resource ?? 'unknown'}`, executionId));
@@ -68,7 +75,7 @@ export class ToolRuntime {
         if (controller.signal.aborted) throw controller.signal.reason;
         return entry.handler(input, { ...context, executionId, signal: controller.signal, tool: structuredClone(entry.manifest) });
       });
-      const settle = () => { handlerPending = false; releaseReservation(); if (callerFinished) this.#active.delete(executionId); };
+      const settle = () => { handlerPending = false; releaseReservation(); releaseAdmission(); if (callerFinished) this.#active.delete(executionId); };
       // Keep an uncooperative handler's ID reserved even after the caller times out.
       invocation.then(settle, settle);
       const value = await Promise.race([invocation, cancelled]);
@@ -80,7 +87,7 @@ export class ToolRuntime {
     } finally {
       callerFinished = true;
       clearTimeout(timer); detach(); removeAbort();
-      if (!handlerPending) { releaseReservation(); this.#active.delete(executionId); }
+      if (!handlerPending) { releaseReservation(); releaseAdmission(); this.#active.delete(executionId); }
     }
   }
 

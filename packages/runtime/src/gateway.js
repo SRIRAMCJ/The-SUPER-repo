@@ -2,11 +2,12 @@ import { createServer } from 'node:http';
 import { URL } from 'node:url';
 import { RuntimeOperations } from './operations.js';
 import { RuntimeCommandBus } from './command-bus.js';
+import { RuntimeRequestGuard } from './request-guard.js';
 
 const SCHEMA_VERSION = '0.1.0';
 
 export class ControlPlaneGateway {
-  constructor({ controlPlane, operations = null, commands = null, authorize = () => true, maxBodyBytes = 65536 } = {}) {
+  constructor({ controlPlane, operations = null, commands = null, authorize = () => true, requestGuard = null, maxBodyBytes = 65536 } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function' || typeof controlPlane.snapshot !== 'function') throw new TypeError('ControlPlaneGateway requires a compatible runtime control plane');
     if (operations && typeof operations.getOperations !== 'function') throw new TypeError('operations must expose getOperations()');
     if (commands && typeof commands.list !== 'function' || commands && typeof commands.execute !== 'function') throw new TypeError('commands must expose list() and execute()');
@@ -16,6 +17,7 @@ export class ControlPlaneGateway {
     this.operations = operations ?? new RuntimeOperations({ controlPlane });
     this.commands = commands ?? new RuntimeCommandBus({ controlPlane, operations: this.operations });
     this.authorize = authorize;
+    this.requestGuard = requestGuard ?? new RuntimeRequestGuard({ maxBodyBytes });
     this.maxBodyBytes = maxBodyBytes;
     this.server = null;
   }
@@ -26,6 +28,9 @@ export class ControlPlaneGateway {
     const rawPath = String(request.path ?? '/');
     const parsed = new URL(rawPath, 'http://super.local');
     const route = parsed.pathname.replace(/\/+$/, '') || '/';
+    const admission = this.requestGuard.admit(request);
+    if (admission.decision === 'denied') return failure(admission.error.code === 'RATE_LIMITED' ? 429 : admission.error.code === 'BODY_TOO_LARGE' ? 413 : 400, admission.error.code, admission.error.message, admission.retryAfterMs);
+    if (admission.decision === 'replay') return admission.response;
     let authorized = false;
     try { authorized = await this.authorize({ method, path: route, request }); } catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
     if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
@@ -46,14 +51,18 @@ export class ControlPlaneGateway {
         if (!body || typeof body !== 'object' || Array.isArray(body)) return failure(400, 'INVALID_BODY', 'Command body must be an object');
         if (typeof body.command !== 'string' || !body.command.trim()) return failure(400, 'INVALID_INPUT', 'command must be a non-empty string');
         const result = await this.commands.execute(body.command, body.input ?? {}, { correlationId: body.correlationId, request });
-        return result.ok ? ok(result, 200) : commandFailure(result);
+        const response = result.ok ? ok(result, 200) : commandFailure(result);
+        this.requestGuard.complete(admission, response);
+        return response;
       }
       if (method === 'POST' && /^\/executions\/[^/]+\/cancel$/.test(route)) {
         const executionId = decodeURIComponent(route.split('/')[2]);
         const body = request.body === undefined ? {} : request.body;
         if (body !== null && typeof body !== 'object') return failure(400, 'INVALID_BODY', 'Request body must be an object');
         const reason = typeof body?.reason === 'string' && body.reason.trim() ? body.reason : undefined;
-        return ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
+        const response = ok(await this.controlPlane.cancelExecution(executionId, reason), 202);
+        this.requestGuard.complete(admission, response);
+        return response;
       }
       return failure(404, 'NOT_FOUND', `Unknown control-plane route: ${method} ${route}`);
     } catch (error) { return failure(500, 'CONTROL_PLANE_ERROR', error instanceof Error ? error.message : String(error)); }
@@ -90,7 +99,7 @@ export class ControlPlaneGateway {
 function queryFilter(params) { const filter = {}; for (const key of ['executionId', 'type', 'status']) if (params.has(key)) filter[key] = params.get(key); return filter; }
 function executionFilter(params) { const filter = queryFilter(params); if (params.has('limit')) filter.limit = Number(params.get('limit')); return filter; }
 function ok(data, status = 200) { return { status, body: { schemaVersion: SCHEMA_VERSION, ok: true, data } }; }
-function failure(status, code, message) { return { status, body: { schemaVersion: SCHEMA_VERSION, ok: false, error: { code, message } } }; }
+function failure(status, code, message, retryAfterMs = null) { return { status, body: { schemaVersion: SCHEMA_VERSION, ok: false, error: { code, message }, ...(retryAfterMs === null ? {} : { retryAfterMs }) } }; }
 function commandFailure(result) { return { status: result.error.code === 'COMMAND_NOT_FOUND' ? 404 : result.error.code === 'FORBIDDEN' ? 403 : result.error.code === 'INVALID_INPUT' ? 400 : 500, body: { schemaVersion: SCHEMA_VERSION, ok: false, error: result.error, correlationId: result.correlationId } }; }
 
 async function readJsonBody(req, maxBytes) {

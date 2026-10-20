@@ -25,6 +25,7 @@ export { RuntimeCommandBus } from './command-bus.js';
 export { RuntimeLifecycleManager, RUNTIME_LIFECYCLE_STATES } from './lifecycle.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';
 export { ControlPlaneGateway } from './gateway.js';
+export { RuntimeRequestGuard, RUNTIME_REQUEST_GUARD_SCHEMA_VERSION } from './request-guard.js';
 export { CapabilityPlanner } from './planner.js';
 export { TaskDecomposer } from './task-decomposer.js';
 export { TaskGraphExecutor } from './task-graph-executor.js';

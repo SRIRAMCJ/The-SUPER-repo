@@ -33,16 +33,32 @@ test('lifecycle transitions are explicit and invalid transitions are rejected', 
 });
 
 test('startup failure enters failed state and retains a diagnostic history entry', async () => {
+  const calls = [];
   const manager = new RuntimeLifecycleManager({
     clock,
     components: [
-      { name: 'database', start: () => { throw new Error('database unavailable'); }, stop: () => {} }
+      { name: 'database', start: () => calls.push('database:start'), stop: () => calls.push('database:stop') },
+      { name: 'api', dependsOn: ['database'], start: () => { calls.push('api:start'); throw new Error('api unavailable'); }, stop: () => calls.push('api:stop') }
     ]
   });
-  await assert.rejects(() => manager.start(), /database unavailable/);
+  await assert.rejects(() => manager.start(), /api unavailable/);
+  assert.deepEqual(calls, ['database:start', 'api:start', 'database:stop']);
   assert.equal(manager.getState().state, 'failed');
   const history = manager.getHistory();
-  assert.ok(history.some((entry) => entry.state === 'failed' && entry.error === 'database unavailable'));
+  assert.ok(history.some((entry) => entry.state === 'failed' && entry.error === 'api unavailable'));
+});
+
+test('failed startup does not stop components that never started', async () => {
+  const calls = [];
+  const manager = new RuntimeLifecycleManager({
+    components: [
+      { name: 'first', start: () => calls.push('first:start'), stop: () => calls.push('first:stop') },
+      { name: 'second', dependsOn: ['first'], start: () => { calls.push('second:start'); throw new Error('boom'); }, stop: () => calls.push('second:stop') },
+      { name: 'third', dependsOn: ['second'], start: () => calls.push('third:start'), stop: () => calls.push('third:stop') }
+    ]
+  });
+  await assert.rejects(() => manager.start(), /boom/);
+  assert.deepEqual(calls, ['first:start', 'second:start', 'first:stop']);
 });
 
 test('dependency cycles and missing dependencies fail deterministically', async () => {
@@ -67,5 +83,17 @@ test('lifecycle state and history are isolated from caller mutation', async () =
   history.push({ state: 'evil' });
   assert.equal(manager.getState().activeOperation, null);
   assert.equal(manager.getHistory().some((entry) => entry.state === 'evil'), false);
+  await manager.stop();
+});
+
+test('concurrent lifecycle commands are serialized', async () => {
+  const calls = [];
+  const manager = new RuntimeLifecycleManager({
+    clock,
+    components: [{ name: 'runtime', start: async () => { calls.push('start'); await new Promise((resolve) => setTimeout(resolve, 5)); }, stop: () => calls.push('stop') }]
+  });
+  await Promise.all([manager.start(), manager.start().catch((error) => error)]);
+  assert.deepEqual(calls, ['start']);
+  assert.equal(manager.getState().state, 'running');
   await manager.stop();
 });

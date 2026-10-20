@@ -85,7 +85,7 @@ export class DistributedCapabilityGate {
     if (!node.capabilities.includes('*') && !node.capabilities.includes(capabilityRequest.id)) throw failure('CAPABILITY_NOT_ASSIGNED', `Node cannot execute capability: ${capabilityRequest.id}`);
 
     const key = JSON.stringify([nodeId, executionId, fencingToken, idempotencyKey]);
-    const signature = JSON.stringify([capabilityRequest, input]);
+    const signature = JSON.stringify([capabilityRequest, input, securityContext]);
     if (this.#requestSignatures.has(key) && this.#requestSignatures.get(key) !== signature) {
       throw failure('IDEMPOTENCY_CONFLICT', 'Idempotency key was used with different capability or input');
     }

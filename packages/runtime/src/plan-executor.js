@@ -2,23 +2,29 @@ import { createExecutionId } from './events.js';
 import { isTerminalExecutionStatus } from './state.js';
 
 export class ExecutionPlanExecutor {
-  constructor({ executionEngine, events = null, clock = () => new Date(), stateStore = null } = {}) {
+  constructor({ executionEngine, events = null, clock = () => new Date(), stateStore = null, shutdownAdmission = null } = {}) {
     if (!executionEngine) throw new TypeError('ExecutionPlanExecutor requires executionEngine');
+    if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     this.executionEngine = executionEngine;
     this.events = events;
     this.clock = clock;
     this.stateStore = stateStore;
+    this.shutdownAdmission = shutdownAdmission;
   }
 
   async execute(plan, input = {}, context = {}) {
     validatePlan(plan);
     const executionId = createExecutionId();
     const startedAt = this.clock().toISOString();
-    return this.#run(plan, executionId, startedAt, 1, input, [], context, 1, false);
+    return this.#withAdmission(executionId, plan, () => this.#run(plan, executionId, startedAt, 1, input, [], context, 1, false));
   }
 
   async resume(plan, executionId, context = {}, options = {}) {
     validatePlan(plan);
+    return this.#withAdmission(executionId, plan, () => this.#resume(plan, executionId, context, options));
+  }
+
+  async #resume(plan, executionId, context, options) {
     if (!this.stateStore) throw Object.assign(new Error('Execution state store is required for resume'), { code: 'EXECUTION_STATE_UNAVAILABLE', retryable: false });
     const state = await this.stateStore.get(executionId);
     if (!state) return failure(executionId, plan.root, 'EXECUTION_STATE_NOT_FOUND', `Execution state not found: ${executionId}`);
@@ -36,6 +42,15 @@ export class ExecutionPlanExecutor {
       return failure(executionId, plan.root, error?.code ?? 'EXECUTION_STATE_CONFLICT', error instanceof Error ? error.message : String(error), Boolean(error?.retryable));
     }
     return this.#run(plan, executionId, claimed.startedAt, state.nextStep, state.currentInput, state.results ?? [], context, claimed.attempt, true);
+  }
+
+  async #withAdmission(executionId, plan, run) {
+    if (!this.shutdownAdmission) return run();
+    let lease;
+    try { lease = this.shutdownAdmission.admit(executionId); }
+    catch (error) { return failure(executionId, plan.root, error.code ?? 'ADMISSION_CLOSED', error instanceof Error ? error.message : String(error)); }
+    try { return await run(); }
+    finally { this.shutdownAdmission.release(lease); }
   }
 
   async #run(plan, executionId, startedAt, startStep, input, priorResults, context, attempt, resumed) {

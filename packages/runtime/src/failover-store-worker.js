@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { writeAtomicJson } from './atomic-json.js';
 
 const file = process.argv[2];
@@ -33,7 +34,7 @@ try {
     if (typeof owner !== 'string' || !owner.trim() || !Number.isSafeInteger(leaseMs) || leaseMs < 1000 || !Number.isSafeInteger(now + leaseMs) || current?.epoch === Number.MAX_SAFE_INTEGER) throw fault('FAILOVER_REQUEST_INVALID');
     if (current?.expiresAt > now) throw fault('FAILOVER_LEASE_HELD');
     next = { schemaVersion: '0.1.0', name, owner, token: randomUUID(), epoch: (current?.epoch ?? 0) + 1, expiresAt: now + leaseMs, version: current?.version ?? 0, result: current?.result ?? null };
-  } else if (action === 'renew' || action === 'commit' || action === 'release') {
+  } else if (action === 'renew' || action === 'commit' || action === 'release' || action === 'writeEffect') {
     if (!current || !token || current.token !== token || current.epoch !== epoch || current.expiresAt <= now) throw fault('FAILOVER_FENCE_REJECTED');
     if (action === 'renew') {
       if (!Number.isSafeInteger(leaseMs) || leaseMs < 1000 || !Number.isSafeInteger(now + leaseMs)) throw fault('FAILOVER_REQUEST_INVALID');
@@ -41,6 +42,12 @@ try {
     } else if (action === 'commit') {
       if (result === undefined || current.version === Number.MAX_SAFE_INTEGER) throw fault('FAILOVER_REQUEST_INVALID');
       next = { ...current, result, version: current.version + 1 };
+    } else if (action === 'writeEffect') {
+      const destination = request.destination;
+      if (typeof destination !== 'string' || !path.isAbsolute(destination) || destination === file || destination === `${file}.lock` || request.value === undefined) throw fault('FAILOVER_REQUEST_INVALID');
+      await writeAtomicJson(destination, request.value, { beforeRename: () => {
+        if (Date.now() >= current.expiresAt) throw fault('FAILOVER_FENCE_REJECTED');
+      } });
     } else next = { ...current, token: null, expiresAt: 0 };
   } else if (action !== 'inspect') throw fault('FAILOVER_REQUEST_INVALID');
   if (next !== current) { records.set(name, next); await writeAtomicJson(file, [...records.values()]); }

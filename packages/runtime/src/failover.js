@@ -59,7 +59,7 @@ export class RuntimeFailoverKernel {
       }).then(() => { if (!lost && !settled) timer = setTimeout(renew, this.renewEveryMs); });
     };
     timer = setTimeout(renew, this.renewEveryMs);
-    const fence = Object.freeze({ name, incidentId, epoch: lease.epoch, token: lease.token,
+    const fence = Object.freeze({ name, incidentId, key, epoch: lease.epoch, token: lease.token,
       assertCurrent: async () => {
         const current = await this.store.inspect(key);
         if (current?.token !== lease.token || current.epoch !== lease.epoch || current.expiresAt <= Date.now()) throw Object.assign(new Error('Failover fence lost'), { code: 'FAILOVER_FENCE_REJECTED' });

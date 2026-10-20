@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 // Atomic replacement for a single writer. This is not a distributed CAS store.
-export async function writeAtomicJson(filePath, value) {
+export async function writeAtomicJson(filePath, value, { beforeRename } = {}) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   let handle;
@@ -12,6 +12,7 @@ export async function writeAtomicJson(filePath, value) {
     await handle.writeFile(JSON.stringify(value, null, 2), 'utf8');
     await handle.sync();
     await handle.close(); handle = null;
+    if (beforeRename) await beforeRename();
     await rename(temporaryPath, filePath);
     const directory = await open(path.dirname(filePath), 'r');
     try { await directory.sync(); } finally { await directory.close(); }

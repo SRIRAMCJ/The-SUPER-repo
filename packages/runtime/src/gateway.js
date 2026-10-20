@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import { RuntimeOperations } from './operations.js';
 import { RuntimeCommandBus } from './command-bus.js';
@@ -6,17 +7,19 @@ import { RuntimeCommandBus } from './command-bus.js';
 const SCHEMA_VERSION = '0.1.0';
 
 export class ControlPlaneGateway {
-  constructor({ controlPlane, operations = null, commands = null, authorize = () => true, maxBodyBytes = 65536 } = {}) {
+  constructor({ controlPlane, operations = null, commands = null, authorize = () => true, maxBodyBytes = 65536, shutdownAdmission = null } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function' || typeof controlPlane.snapshot !== 'function') throw new TypeError('ControlPlaneGateway requires a compatible runtime control plane');
     if (operations && typeof operations.getOperations !== 'function') throw new TypeError('operations must expose getOperations()');
     if (commands && typeof commands.list !== 'function' || commands && typeof commands.execute !== 'function') throw new TypeError('commands must expose list() and execute()');
     if (typeof authorize !== 'function') throw new TypeError('authorize must be a function');
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) throw new TypeError('maxBodyBytes must be an integer >= 1024');
+    if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     this.controlPlane = controlPlane;
     this.operations = operations ?? new RuntimeOperations({ controlPlane });
     this.commands = commands ?? new RuntimeCommandBus({ controlPlane, operations: this.operations });
     this.authorize = authorize;
     this.maxBodyBytes = maxBodyBytes;
+    this.shutdownAdmission = shutdownAdmission;
     this.server = null;
   }
 
@@ -62,6 +65,21 @@ export class ControlPlaneGateway {
   async listen({ host = '127.0.0.1', port = 0 } = {}) {
     if (this.server) throw new Error('ControlPlaneGateway is already listening');
     this.server = createServer(async (req, res) => {
+      let lease;
+      if (this.shutdownAdmission) {
+        try {
+          lease = this.shutdownAdmission.admit(`http:${randomUUID()}`);
+          let released = false;
+          const release = () => { if (!released) { released = true; this.shutdownAdmission.release(lease); } };
+          res.once('finish', release);
+          res.once('close', release);
+        } catch {
+          const denied = failure(503, 'ADMISSION_CLOSED', 'Runtime is draining');
+          res.writeHead(denied.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify(denied.body));
+          return;
+        }
+      }
       try {
         const body = await readJsonBody(req, this.maxBodyBytes);
         const result = await this.handle({ method: req.method, path: req.url, headers: req.headers, body });

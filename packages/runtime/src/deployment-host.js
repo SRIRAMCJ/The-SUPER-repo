@@ -10,10 +10,10 @@ export class RuntimeDeploymentHost {
   #signals = null;
   #operation = null;
 
-  constructor({ coordinator, failover, incidentId, name, intervalMs = 1000, pollTimeoutMs = 1000, onResult = () => {}, processRef, signalDeadlineMs = 30_000 } = {}) {
+  constructor({ coordinator, failover, incidentId, name, intervalMs = 1000, pollTimeoutMs = 1000, attemptTimeoutMs = 65_000, onResult = () => {}, processRef, signalDeadlineMs = 30_000 } = {}) {
     if (!coordinator || typeof coordinator.start !== 'function' || typeof coordinator.shutdown !== 'function' || !coordinator.admission) throw new TypeError('coordinator with admission is required');
     if (!failover || typeof failover.attempt !== 'function' || typeof incidentId !== 'function' || typeof onResult !== 'function') throw new TypeError('failover, incidentId and onResult are required');
-    if (typeof name !== 'string' || !name.trim() || !Number.isSafeInteger(intervalMs) || intervalMs < 1 || !Number.isSafeInteger(pollTimeoutMs) || pollTimeoutMs < 1) throw new TypeError('name, intervalMs and pollTimeoutMs are required');
+    if (typeof name !== 'string' || !name.trim() || !Number.isSafeInteger(intervalMs) || intervalMs < 1 || !Number.isSafeInteger(pollTimeoutMs) || pollTimeoutMs < 1 || !Number.isSafeInteger(attemptTimeoutMs) || attemptTimeoutMs < 1) throw new TypeError('name and positive polling deadlines are required');
     this.coordinator = coordinator;
     this.admission = coordinator.admission;
     this.failover = failover;
@@ -21,6 +21,7 @@ export class RuntimeDeploymentHost {
     this.name = name;
     this.intervalMs = intervalMs;
     this.pollTimeoutMs = pollTimeoutMs;
+    this.attemptTimeoutMs = attemptTimeoutMs;
     this.onResult = onResult;
     this.processRef = processRef;
     this.signalDeadlineMs = signalDeadlineMs;
@@ -71,7 +72,7 @@ export class RuntimeDeploymentHost {
     try {
       const id = await boundedIncident(this.incidentId, this.#controller.signal, this.pollTimeoutMs);
       if (this.#running && typeof id === 'string' && id.trim()) {
-        const result = await this.failover.attempt(this.name, id, { signal: this.#controller.signal });
+        const result = await boundedCall(() => this.failover.attempt(this.name, id, { signal: this.#controller.signal }), this.#controller.signal, this.attemptTimeoutMs);
         this.#emit(result);
       }
     } catch (error) { if (this.#running) this.#emit({ status: 'error', error }); }
@@ -82,6 +83,10 @@ export class RuntimeDeploymentHost {
 }
 
 async function boundedIncident(provider, signal, timeoutMs) {
+  return boundedCall(() => provider({ signal }), signal, timeoutMs);
+}
+
+async function boundedCall(work, signal, timeoutMs) {
   let timer, abort;
   const cancelled = new Promise((_, reject) => {
     abort = () => reject(Object.assign(new Error('Incident polling cancelled'), { code: 'INCIDENT_CANCELLED' }));
@@ -90,6 +95,6 @@ async function boundedIncident(provider, signal, timeoutMs) {
   const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('Incident polling timed out'), { code: 'INCIDENT_TIMEOUT' })), timeoutMs); });
   try {
     if (signal.aborted) abort();
-    return await Promise.race([Promise.resolve().then(() => provider({ signal })), cancelled, timeout]);
+    return await Promise.race([Promise.resolve().then(work), cancelled, timeout]);
   } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); }
 }

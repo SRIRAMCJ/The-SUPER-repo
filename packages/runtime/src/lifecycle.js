@@ -23,10 +23,11 @@ export class RuntimeLifecycleManager {
     this.history = [];
     this.activeOperation = null;
     this.sequence = 0;
+    this.cleanupRequired = false;
   }
 
   getState() {
-    return Object.freeze({ schemaVersion: SCHEMA_VERSION, state: this.state, activeOperation: this.activeOperation ? structuredClone(this.activeOperation) : null, sequence: this.sequence });
+    return Object.freeze({ schemaVersion: SCHEMA_VERSION, state: this.state, activeOperation: this.activeOperation ? structuredClone(this.activeOperation) : null, sequence: this.sequence, cleanupRequired: this.cleanupRequired });
   }
 
   getHistory(limit = 100) {
@@ -40,16 +41,28 @@ export class RuntimeLifecycleManager {
 
   async start() {
     this.assertState(['bootstrap', 'stopped', 'failed'], 'start');
+    if (this.cleanupRequired) throw new Error('Cannot restart until component cleanup succeeds');
     if (this.state !== 'bootstrap') await this.transition('bootstrap', 'restart');
     await this.transition('initializing', 'start');
+    const started = [];
     try {
-      for (const component of orderComponents(this.components)) await this.invoke(component, 'start');
+      for (const component of orderComponents(this.components)) {
+        await this.invoke(component, 'start');
+        started.push(component);
+      }
       await this.transition('ready', 'start');
       await this.transition('running', 'start');
       return this.getState();
     } catch (error) {
-      await this.fail('start', error);
-      throw error;
+      const rollbackErrors = [];
+      for (const component of started.reverse()) {
+        try { await this.invoke(component, 'stop'); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      const failure = rollbackErrors.length ? new AggregateError([error, ...rollbackErrors], 'Startup and rollback failed', { cause: error }) : error;
+      this.cleanupRequired = rollbackErrors.length > 0;
+      await this.fail('start', failure);
+      throw failure;
     }
   }
 
@@ -63,8 +76,14 @@ export class RuntimeLifecycleManager {
     this.assertState(['bootstrap', 'initializing', 'ready', 'running', 'draining', 'failed'], 'stop');
     if (this.state !== 'stopping') await this.transition('stopping', 'stop');
     try {
-      for (const component of orderComponents(this.components).reverse()) await this.invoke(component, 'stop');
+      const errors = [];
+      for (const component of orderComponents(this.components).reverse()) {
+        try { await this.invoke(component, 'stop'); }
+        catch (error) { errors.push(error); }
+      }
+      if (errors.length) { this.cleanupRequired = true; throw new AggregateError(errors, 'Runtime components failed to stop', { cause: errors[0] }); }
       await this.transition('stopped', 'stop');
+      this.cleanupRequired = false;
       return this.getState();
     } catch (error) {
       await this.fail('stop', error);

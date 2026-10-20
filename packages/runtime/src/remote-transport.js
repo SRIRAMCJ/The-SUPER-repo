@@ -23,7 +23,7 @@ export class RemoteExecutionTransport {
     validateString(nodeId, 'NODE_ID_INVALID', 'nodeId');
     validateString(idempotencyKey, 'IDEMPOTENCY_KEY_REQUIRED', 'idempotencyKey');
     if (typeof handler !== 'function') throw failure('HANDLER_INVALID', 'handler must be a function');
-    const signature = JSON.stringify([executionId, nodeId, fencingToken, idempotencyKey, capability, input]);
+    const signature = JSON.stringify([executionId, nodeId, fencingToken, idempotencyKey, capability, input, securityContext]);
     if (this.#requestSignatures.has(requestId) && this.#requestSignatures.get(requestId) !== signature) throw failure('REQUEST_CONFLICT', 'Request ID was used with different execution parameters');
     const existing = this.requests.get(requestId);
     if (existing) return clone(existing);

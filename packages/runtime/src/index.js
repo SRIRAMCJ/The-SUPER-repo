@@ -35,6 +35,7 @@ export { BoundedHttpTransport } from './bounded-http.js';
 export { FileFailoverStore } from './failover-store.js';
 export { RuntimeFailoverKernel } from './failover.js';
 export { RuntimeDeploymentHost } from './deployment-host.js';
+export { RuntimeGatewayDeployment } from './gateway-deployment.js';
 export { RuntimeGovernance, RUNTIME_GOVERNANCE_SCHEMA_VERSION } from './governance.js';
 export { ControlPlaneGateway } from './gateway.js';
 export { CapabilityPlanner } from './planner.js';

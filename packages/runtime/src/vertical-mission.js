@@ -87,8 +87,9 @@ export class VerticalMissionEngine {
       : record;
     if (!claimed) return null;
     if (fenced && claimed.status !== 'executing' && claimed.status !== 'recovering') {
-      await this.missionStore.releaseRecovery(missionExecutionId, claimed.recoveryLease.token);
-      return this.missionStore.get(missionExecutionId);
+      return Object.freeze({ ...claimed, recovery: TERMINAL.has(claimed.status)
+        ? { status: 'terminal', resumable: false }
+        : { status: 'available', resumable: false, reason: 'Mission is not interrupted inside an executable phase' } });
     }
     let result;
     try {

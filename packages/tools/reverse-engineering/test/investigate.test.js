@@ -19,6 +19,18 @@ test('traces static module, route and Electron IPC evidence with digest and line
   assert.equal(report.limitations.length, 3);
 }));
 
+test('inspects TypeScript and TSX imports, declarations, and routes', () => fixture(async (root) => {
+  await writeFile(path.join(root, 'api.ts'), "import type { Search } from './types';\nexport interface SearchRequest { query: string }\nexport type Result = string;\nrouter.get('/search', handler);\n");
+  await writeFile(path.join(root, 'view.tsx'), "import React from 'react';\nexport const SearchView = () => <div />;\n");
+  const report = await investigateJavaScript(root);
+  assert.deepEqual(report.files.map((file) => file.path), ['api.ts', 'view.tsx']);
+  assert.deepEqual(report.findings.map(({ kind, value }) => [kind, value]), [
+    ['module-import', './types'], ['typescript-declaration', 'SearchRequest'],
+    ['typescript-declaration', 'Result'], ['route', '/search'],
+    ['module-import', 'react'], ['module-export', 'SearchView']
+  ]);
+}));
+
 test('never follows symlinks, excludes dependency trees and reports size limits', () => fixture(async (root) => {
   await mkdir(path.join(root, 'node_modules'));
   await writeFile(path.join(root, 'node_modules', 'evil.js'), "app.get('/hidden', handler)");

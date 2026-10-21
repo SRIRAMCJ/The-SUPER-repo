@@ -7,18 +7,20 @@ import { RuntimeCommandBus } from './command-bus.js';
 const SCHEMA_VERSION = '0.1.0';
 
 export class ControlPlaneGateway {
-  constructor({ controlPlane, operations = null, commands = null, authorize = () => true, maxBodyBytes = 65536, shutdownAdmission = null, requestGuard = null } = {}) {
+  constructor({ controlPlane, operations = null, commands = null, authorize = null, maxBodyBytes = 65536, shutdownAdmission = null, requestGuard = null } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function' || typeof controlPlane.snapshot !== 'function') throw new TypeError('ControlPlaneGateway requires a compatible runtime control plane');
     if (operations && typeof operations.getOperations !== 'function') throw new TypeError('operations must expose getOperations()');
     if (commands && typeof commands.list !== 'function' || commands && typeof commands.execute !== 'function') throw new TypeError('commands must expose list() and execute()');
-    if (typeof authorize !== 'function') throw new TypeError('authorize must be a function');
+    if (authorize !== null && typeof authorize !== 'function') throw new TypeError('authorize must be a function');
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) throw new TypeError('maxBodyBytes must be an integer >= 1024');
     if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     if (requestGuard && (typeof requestGuard.admit !== 'function' || typeof requestGuard.complete !== 'function')) throw new TypeError('requestGuard must expose admit() and complete()');
     this.controlPlane = controlPlane;
     this.operations = operations ?? new RuntimeOperations({ controlPlane });
     this.commands = commands ?? new RuntimeCommandBus({ controlPlane, operations: this.operations });
-    this.authorize = authorize;
+    this.authorize = authorize ?? (() => true);
+    this.explicitAuthorization = authorize !== null;
+    this.requireAuthenticatedIdentity = false;
     this.maxBodyBytes = maxBodyBytes;
     this.shutdownAdmission = shutdownAdmission;
     this.requestGuard = requestGuard;
@@ -31,13 +33,22 @@ export class ControlPlaneGateway {
     const rawPath = String(request.path ?? '/');
     const parsed = new URL(rawPath, 'http://super.local');
     const route = parsed.pathname.replace(/\/+$/, '') || '/';
-    let authorized = false;
-    try { authorized = await this.authorize({ method, path: route, request }); } catch (error) { return failure(403, 'AUTHORIZATION_ERROR', error instanceof Error ? error.message : String(error)); }
-    if (!authorized) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
+    let authorization;
+    try { authorization = await this.authorize({ method, path: route, request }); }
+    catch { return failure(403, 'AUTHORIZATION_ERROR', 'Authorization failed'); }
+    if (authorization === false || authorization == null || authorization?.allowed === false) return failure(403, 'FORBIDDEN', 'Control-plane access denied');
+    if (authorization !== true && (typeof authorization !== 'object' || authorization.allowed !== true ||
+      typeof authorization.principal !== 'string' || !authorization.principal.trim() || authorization.principal.length > 256)) {
+      return failure(403, 'AUTHORIZATION_ERROR', 'Authorization must return true or an allowed principal');
+    }
+    if (authorization === true && this.requireAuthenticatedIdentity) return failure(403, 'AUTHENTICATED_IDENTITY_REQUIRED', 'A verified principal is required');
+    // Only the authorization callback may establish a trusted client key.
+    // A raw request field or client-supplied header cannot select a principal.
+    const trustedRequest = { ...request, clientKey: authorization === true ? undefined : `auth:${authorization.principal.trim()}` };
 
     let admission;
     if (this.requestGuard) {
-      try { admission = await this.requestGuard.admit(request); }
+      try { admission = await this.requestGuard.admit(trustedRequest); }
       catch { return failure(503, 'REQUEST_GUARD_UNAVAILABLE', 'Request guard unavailable'); }
       if (admission.decision === 'replay') return admission.response;
       if (admission.decision === 'in_progress') return failure(409, 'IDEMPOTENCY_IN_PROGRESS', 'Request is in progress');
@@ -46,7 +57,7 @@ export class ControlPlaneGateway {
         return failure(code === 'RATE_LIMITED' ? 429 : code.endsWith('_UNAVAILABLE') ? 503 : code === 'BODY_TOO_LARGE' ? 413 : code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_CAPACITY' ? 409 : 400, code, admission.error.message);
       }
     }
-    const result = await this.#dispatch(request, method, route, parsed);
+    const result = await this.#dispatch(trustedRequest, method, route, parsed);
     if (admission?.cacheKey) {
       try {
         if (!await this.requestGuard.complete(admission, result)) return failure(503, 'IDEMPOTENCY_COMPLETION_FAILED', 'Could not commit idempotency response');
@@ -87,6 +98,8 @@ export class ControlPlaneGateway {
 
   async listen({ host = '127.0.0.1', port = 0 } = {}) {
     if (this.server) throw new Error('ControlPlaneGateway is already listening');
+    if (host !== '127.0.0.1' && host !== '::1' && !this.explicitAuthorization) throw new TypeError('non-loopback gateway requires authorize()');
+    this.requireAuthenticatedIdentity = host !== '127.0.0.1' && host !== '::1';
     this.server = createServer(async (req, res) => {
       let lease;
       if (this.shutdownAdmission) {

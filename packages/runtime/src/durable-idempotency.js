@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, open, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { withKernelFileLock } from './kernel-file-lock.js';
 
 const SCHEMA_VERSION = '0.2.0';
 
@@ -112,26 +112,16 @@ export class DurableIdempotencyStore {
     this.#records = records;
   }
   async #withLock(operation) {
-    const handle = await open(this.#lockPath, 'a+', 0o600);
-    try {
-      await acquireLock(handle.fd, this.lockTimeoutMs);
-      return await operation();
-    } finally { await handle.close(); }
+    try { return await withKernelFileLock(this.#lockPath, this.lockTimeoutMs, operation); }
+    catch (error) {
+      if (error.code === 'FILE_LOCK_TIMEOUT') error.code = 'IDEMPOTENCY_LOCK_TIMEOUT';
+      if (error.code === 'FILE_LOCK_ERROR') error.code = 'IDEMPOTENCY_LOCK_ERROR';
+      throw error;
+    }
   }
   #checkCapacity(key) { if (!this.#records.has(key) && this.#records.size >= this.maxRecords) throw Object.assign(new Error('Idempotency capacity exhausted'), { code: 'IDEMPOTENCY_CAPACITY' }); }
   #validateExpiry(value) { if (!Number.isFinite(value) || value <= this.clock()) throw new TypeError('expiresAt must be a future timestamp'); }
   #assertReady() { if (!this.ready) throw new Error('DurableIdempotencyStore.init() must be awaited before use'); }
-}
-function acquireLock(fd, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('flock', ['-x', '-w', String(timeoutMs / 1000), '3'], { stdio: ['ignore', 'ignore', 'ignore', fd] });
-    child.once('error', reject);
-    child.once('close', (code, signal) => {
-      if (code === 0) resolve();
-      else if (code === 1) reject(Object.assign(new Error('Timed out acquiring idempotency store lock'), { code: 'IDEMPOTENCY_LOCK_TIMEOUT' }));
-      else reject(Object.assign(new Error(`Idempotency lock failed (${signal ?? code})`), { code: 'IDEMPOTENCY_LOCK_ERROR' }));
-    });
-  });
 }
 function journalEntry(record) { const { key, createdAt, expiresAt, ...value } = record; return { schemaVersion: SCHEMA_VERSION, op: 'put', key, value, createdAt, expiresAt }; }
 function normalizeKey(key) { if (typeof key !== 'string' || !key.trim() || key.length > 4096) throw new TypeError('key must be a non-empty string of at most 4096 characters'); return key; }

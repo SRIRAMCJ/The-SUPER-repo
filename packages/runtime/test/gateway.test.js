@@ -142,3 +142,50 @@ test('gateway authorization precedes guard and concurrent duplicates execute onc
     assert.equal(calls, 1);
   } finally { release(); }
 });
+
+test('authenticated principals isolate replay and rate limits despite spoofed client fields', async () => {
+  let calls = 0;
+  const guard = new RuntimeRequestGuard({ maxRequests: 2 });
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: guard,
+    authorize: ({ request }) => request.headers?.token ? { allowed: true, principal: request.headers.token } : false,
+    commands: { list: () => [], execute: async (_name, _input, context) => ({ ok: true, count: ++calls, principal: context.request.clientKey }) } });
+  const address = await gateway.listen();
+  try {
+    const url = `http://127.0.0.1:${address.port}/commands`;
+    const send = async (token, spoof = 'victim') => {
+      const response = await fetch(url, { method: 'POST', headers: { token, 'idempotency-key': 'same', 'x-client-id': spoof, 'x-forwarded-for': spoof, 'content-type': 'application/json' }, body: '{"command":"run"}' });
+      return { status: response.status, body: await response.json() };
+    };
+    const alice = await send('alice');
+    const bob = await send('bob', 'alice');
+    assert.equal(alice.body.data.principal, 'auth:alice');
+    assert.equal(bob.body.data.principal, 'auth:bob');
+    assert.equal((await send('alice', 'bob')).body.data.count, 1);
+    assert.equal((await send('bob', 'alice')).body.data.count, 2);
+    assert.equal((await send('alice')).status, 429);
+    assert.equal((await send('bob')).status, 429);
+    assert.equal(calls, 2);
+  } finally { await gateway.close(); }
+});
+
+test('raw clientKey cannot bypass gateway identity and invalid authorization fails closed', async () => {
+  const guard = new RuntimeRequestGuard({ maxRequests: 1 });
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: guard });
+  const request = { method: 'GET', path: '/health', remoteAddress: '127.0.0.1', clientKey: 'spoofed' };
+  assert.equal((await gateway.handle(request)).status, 200);
+  assert.equal((await gateway.handle({ ...request, clientKey: 'other' })).status, 429);
+  const invalid = new ControlPlaneGateway({ controlPlane: controlPlane(), authorize: () => ({ allowed: true }) });
+  assert.equal((await invalid.handle(request)).body.error.code, 'AUTHORIZATION_ERROR');
+});
+
+test('non-loopback listener requires a verified principal', async () => {
+  const defaultGateway = new ControlPlaneGateway({ controlPlane: controlPlane() });
+  await assert.rejects(defaultGateway.listen({ host: '0.0.0.0' }), /requires authorize/);
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), authorize: () => true });
+  const address = await gateway.listen({ host: '0.0.0.0' });
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/health`);
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.code, 'AUTHENTICATED_IDENTITY_REQUIRED');
+  } finally { await gateway.close(); }
+});

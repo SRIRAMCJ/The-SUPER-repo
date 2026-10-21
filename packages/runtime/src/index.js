@@ -66,5 +66,6 @@ export { FileMissionStore, MISSION_STORE_SCHEMA_VERSION } from './mission-store.
 export { VerticalMissionEngine, VERTICAL_MISSION_SCHEMA_VERSION } from './vertical-mission.js';
 
 export { DurableIdempotencyStore } from './durable-idempotency.js';
+export { FileRateLimiter } from './file-rate-limiter.js';
 export { RuntimeRequestGuard } from './request-guard.js';
 export { RuntimeRequestIdentity } from './request-identity.js';

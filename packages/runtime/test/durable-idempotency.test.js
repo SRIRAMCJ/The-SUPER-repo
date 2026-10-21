@@ -94,15 +94,48 @@ test('claim ownership is atomic across separate Node processes', async () => {
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('lock timeout uses elapsed time even with a fixed application clock and never steals locks', async () => {
-  const { mkdir, stat } = await import('node:fs/promises');
+test('kernel lock times out and a killed owner releases it', async () => {
+  const { spawn } = await import('node:child_process');
   const dir = await mkdtemp(join(tmpdir(), 'super-lock-timeout-'));
   const filePath = join(dir, 'journal');
+  const script = `import {open} from 'node:fs/promises'; import {spawn} from 'node:child_process'; const h=await open(process.argv[1]+'.flock','a+'); const child=spawn('flock',['-x','3'],{stdio:['ignore','ignore','ignore',h.fd]}); child.on('close',code=>{if(code)process.exit(2);console.log('locked');setInterval(()=>{},1000)});`;
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', script, filePath], { stdio: ['ignore', 'pipe', 'pipe'] });
   try {
-    await mkdir(filePath + '.lock');
+    await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); holder.once('exit', () => reject(new Error('holder exited early'))); });
     const store = new DurableIdempotencyStore({ filePath, clock: () => 0, lockTimeoutMs: 20, lockRetryMs: 2 });
     await assert.rejects(store.init(), { code: 'IDEMPOTENCY_LOCK_TIMEOUT' });
-    assert.equal((await stat(filePath + '.lock')).isDirectory(), true);
+    holder.kill('SIGKILL');
+    await new Promise((resolve) => holder.once('exit', resolve));
+    await store.init();
+    assert.equal((await store.claim('key', 'fp', { expiresAt: 100 })).state, 'claimed');
+  } finally { holder.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('observed journal disappearance fails closed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'super-idempotency-loss-'));
+  const filePath = join(dir, 'journal');
+  try {
+    const store = await new DurableIdempotencyStore({ filePath }).init();
+    await store.claim('key', 'fp');
+    await rm(filePath);
+    await assert.rejects(store.claim('other', 'fp'), { code: 'ENOENT' });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('parent retains the flock after the locking child exits', async () => {
+  const { spawn } = await import('node:child_process');
+  const dir = await mkdtemp(join(tmpdir(), 'super-retained-lock-'));
+  const filePath = join(dir, 'journal');
+  try {
+    const ready = await new DurableIdempotencyStore({ filePath }).init();
+    await ready.claim('initial', 'fp');
+    const script = `import {DurableIdempotencyStore} from ${JSON.stringify(new URL('../src/durable-idempotency.js', import.meta.url).href)}; const store=await new DurableIdempotencyStore({filePath:process.argv[1],clock:()=>{console.log('inside');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return Date.now()}}).init(); await store.get('initial');`;
+    const holder = spawn(process.execPath, ['--input-type=module', '-e', script, filePath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); });
+      const contender = new DurableIdempotencyStore({ filePath, lockTimeoutMs: 20 });
+      await assert.rejects(contender.init(), { code: 'IDEMPOTENCY_LOCK_TIMEOUT' });
+    } finally { holder.kill('SIGKILL'); }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

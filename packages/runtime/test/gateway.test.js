@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ControlPlaneGateway } from '../src/index.js';
+import { ControlPlaneGateway, RuntimeRequestGuard } from '../src/index.js';
 
 function controlPlane() {
   return {
@@ -98,4 +98,47 @@ test('gateway lifecycle prevents duplicate listeners and closes cleanly', async 
   await assert.rejects(() => gateway.listen({ host: '127.0.0.1', port: 0 }), /already listening/);
   await gateway.close();
   await gateway.close();
+});
+
+test('gateway guard replays completed commands and limits the actual HTTP client', async () => {
+  let calls = 0;
+  const guard = new RuntimeRequestGuard({ maxRequests: 3 });
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: guard,
+    commands: { list: () => [], execute: async () => ({ ok: true, count: ++calls }) } });
+  const address = await gateway.listen();
+  try {
+    const url = `http://127.0.0.1:${address.port}/commands`;
+    const options = { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'same', 'x-forwarded-for': 'spoofed' }, body: '{"command":"run"}' };
+    const first = await (await fetch(url, options)).json();
+    const replay = await (await fetch(url, options)).json();
+    assert.deepEqual(replay, first);
+    assert.equal(calls, 1);
+    assert.equal((await fetch(url, options)).status, 200);
+    const limited = await fetch(url, options);
+    assert.equal(limited.status, 429);
+    assert.equal((await limited.json()).error.code, 'RATE_LIMITED');
+    assert.equal(calls, 1);
+  } finally { await gateway.close(); }
+});
+
+test('gateway authorization precedes guard and concurrent duplicates execute once', async () => {
+  let calls = 0, release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const guard = new RuntimeRequestGuard();
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: guard,
+    authorize: ({ request }) => request.headers?.token === 'allowed',
+    commands: { list: () => [], execute: async () => { calls++; await pending; return { ok: true }; } } });
+  const body = { command: 'run' };
+  const request = { method: 'POST', path: '/commands', headers: { token: 'allowed', 'idempotency-key': 'once' }, body, remoteAddress: '127.0.0.1' };
+  try {
+    assert.equal((await gateway.handle({ ...request, headers: { 'idempotency-key': 'once' } })).status, 403);
+    const first = gateway.handle(request);
+    while (!calls) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal((await gateway.handle(request)).body.error.code, 'IDEMPOTENCY_IN_PROGRESS');
+    assert.equal(calls, 1);
+    release();
+    assert.equal((await first).status, 200);
+    assert.equal((await gateway.handle(request)).status, 200);
+    assert.equal(calls, 1);
+  } finally { release(); }
 });

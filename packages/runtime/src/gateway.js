@@ -52,6 +52,7 @@ export class ControlPlaneGateway {
       catch { return failure(503, 'REQUEST_GUARD_UNAVAILABLE', 'Request guard unavailable'); }
       if (admission.decision === 'replay') return admission.response;
       if (admission.decision === 'in_progress') return failure(409, 'IDEMPOTENCY_IN_PROGRESS', 'Request is in progress');
+      if (admission.decision === 'recovery_required') return failure(409, 'IDEMPOTENCY_RECOVERY_REQUIRED', 'Request outcome requires reconciliation');
       if (admission.decision === 'denied') {
         const code = admission.error.code;
         return failure(code === 'RATE_LIMITED' ? 429 : code.endsWith('_UNAVAILABLE') ? 503 : code === 'BODY_TOO_LARGE' ? 413 : code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_CAPACITY' ? 409 : 400, code, admission.error.message);

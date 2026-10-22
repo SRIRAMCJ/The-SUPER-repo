@@ -9,12 +9,12 @@ import { RuntimeDeploymentHost } from './deployment-host.js';
 // Concrete local HTTP service composition. The deployment must provide a
 // stable incident identity and an effect-fenced recovery callback.
 export class RuntimeGatewayDeployment {
-  constructor({ controlPlane, store, incidentId, recover, owner, host = '127.0.0.1', port = 0, authorize, requestGuard, intervalMs = 1000, processRef } = {}) {
+  constructor({ controlPlane, store, incidentId, recover, owner, host = '127.0.0.1', port = 0, authorize, requestGuard, preAuthLimiter, intervalMs = 1000, processRef } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function') throw new TypeError('controlPlane with getHealth() is required');
     if (typeof incidentId !== 'function' || typeof recover !== 'function') throw new TypeError('incidentId and recover callbacks are required');
     if (host !== '127.0.0.1' && typeof authorize !== 'function') throw new TypeError('non-loopback gateway requires authorize()');
     this.admission = new RuntimeShutdownAdmission();
-    this.gateway = new ControlPlaneGateway({ controlPlane, authorize, requestGuard, shutdownAdmission: this.admission });
+    this.gateway = new ControlPlaneGateway({ controlPlane, authorize, requestGuard, preAuthLimiter, shutdownAdmission: this.admission });
     this.lifecycle = new RuntimeLifecycleManager({ components: [{ name: 'gateway', start: () => this.gateway.listen({ host, port }), stop: () => this.gateway.close() }] });
     this.coordinator = new RuntimeShutdownCoordinator({ lifecycle: this.lifecycle, admission: this.admission });
     this.supervisor = new RuntimeSupervisorKernel({ components: { gateway: { check: () => {

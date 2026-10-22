@@ -78,14 +78,17 @@ export class RuntimeRequestGuard {
         try { claim = await this.idempotencyStore.claim(cacheKey, fingerprint, { expiresAt: now + this.idempotencyTtlMs }); }
         catch (error) { return denied('IDEMPOTENCY_STORE_UNAVAILABLE', error instanceof Error ? error.message : String(error)); }
         if (claim.state === 'conflict') return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');
+        if (claim.state === 'recovery_required') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'recovery_required', cacheKey, identity });
         if (claim.state === 'replay') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'replay', cacheKey, response: claim.record.response, identity });
         if (claim.state === 'in_progress') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, claim.record.expiresAt - now) });
         return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey, fingerprint, claimToken: claim.record.claimToken, identity });
       }
       const existing = this.#idempotency.get(cacheKey);
-      if (existing && existing.expiresAt > now) {
+      if (existing) {
         if (existing.fingerprint !== fingerprint) return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');
-        if (existing.status === 'pending') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, existing.expiresAt - now) });
+        if (existing.status === 'pending') return existing.expiresAt <= now
+          ? freeze({ schemaVersion: SCHEMA_VERSION, decision: 'recovery_required', cacheKey, identity })
+          : freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, existing.expiresAt - now) });
         return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'replay', cacheKey, response: existing.response, identity });
       }
       if (this.#idempotency.size >= this.maxIdempotencyRecords) return denied('IDEMPOTENCY_CAPACITY', 'Idempotency capacity exhausted');
@@ -103,7 +106,7 @@ export class RuntimeRequestGuard {
     const record = freeze({ schemaVersion: SCHEMA_VERSION, status: 'completed', fingerprint: admission.fingerprint, response: response === undefined ? null : response, createdAt: now, expiresAt: now + this.idempotencyTtlMs });
     if (this.idempotencyStore) return this.idempotencyStore.completeClaim(admission.cacheKey, admission.fingerprint, admission.claimToken, response, { expiresAt: record.expiresAt });
     const existing = this.#idempotency.get(admission.cacheKey);
-    if (!existing || existing.status !== 'pending' || existing.claimToken !== admission.claimToken || existing.fingerprint !== admission.fingerprint) return false;
+    if (!existing || existing.status !== 'pending' || existing.expiresAt <= now || existing.claimToken !== admission.claimToken || existing.fingerprint !== admission.fingerprint) return false;
     this.#idempotency.set(admission.cacheKey, record);
     while (this.#idempotency.size > this.maxIdempotencyRecords) this.#idempotency.delete(this.#idempotency.keys().next().value);
     return true;
@@ -126,7 +129,7 @@ export class RuntimeRequestGuard {
   #purge() {
     const now = this.clock();
     for (const [key, window] of this.#windows) if (now - window.startedAt >= this.windowMs) this.#windows.delete(key);
-    for (const [key, record] of this.#idempotency) if (record.expiresAt <= now) this.#idempotency.delete(key);
+    for (const [key, record] of this.#idempotency) if (record.expiresAt <= now && record.status === 'completed') this.#idempotency.delete(key);
   }
 }
 

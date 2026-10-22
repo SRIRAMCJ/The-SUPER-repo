@@ -189,3 +189,14 @@ test('non-loopback listener requires a verified principal', async () => {
     assert.equal((await response.json()).error.code, 'AUTHENTICATED_IDENTITY_REQUIRED');
   } finally { await gateway.close(); }
 });
+
+test('expired command outcome is quarantined instead of executed again', async () => {
+  let now = 1000;
+  let calls = 0;
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: new RuntimeRequestGuard({ clock: () => now, idempotencyTtlMs: 100 }),
+    commands: { list: () => [], execute: async () => { calls++; now = 1200; return { ok: true }; } } });
+  const request = { method: 'POST', path: '/commands', headers: { 'idempotency-key': 'once' }, body: { command: 'work' }, remoteAddress: '127.0.0.1' };
+  assert.equal((await gateway.handle(request)).body.error.code, 'IDEMPOTENCY_COMPLETION_FAILED');
+  assert.equal((await gateway.handle(request)).body.error.code, 'IDEMPOTENCY_RECOVERY_REQUIRED');
+  assert.equal(calls, 1);
+});

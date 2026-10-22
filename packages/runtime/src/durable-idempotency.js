@@ -38,7 +38,7 @@ export class DurableIdempotencyStore {
     return this.#withLock(async () => {
       await this.#reload(); this.#validateExpiry(expiresAt);
       const existing = this.#records.get(key);
-      if (existing) return clone({ state: existing.fingerprint !== fingerprint ? 'conflict' : existing.status === 'completed' ? 'replay' : 'in_progress', record: existing });
+      if (existing) return clone({ state: existing.fingerprint !== fingerprint ? 'conflict' : existing.status === 'completed' ? 'replay' : existing.expiresAt <= this.clock() ? 'recovery_required' : 'in_progress', record: existing });
       this.#checkCapacity(key);
       const record = { schemaVersion: SCHEMA_VERSION, key, status: 'pending', fingerprint, claimToken: randomUUID(), response: null, createdAt: this.clock(), expiresAt };
       await this.#putRecord(record);
@@ -50,8 +50,31 @@ export class DurableIdempotencyStore {
     return this.#withLock(async () => {
       await this.#reload(); this.#validateExpiry(expiresAt);
       const existing = this.#records.get(key);
-      if (!existing || existing.status !== 'pending' || existing.fingerprint !== fingerprint || !claimToken || existing.claimToken !== claimToken) return false;
+      if (!existing || existing.status !== 'pending' || existing.expiresAt <= this.clock() || existing.fingerprint !== fingerprint || !claimToken || existing.claimToken !== claimToken) return false;
       await this.#putRecord({ ...existing, status: 'completed', response: clone(response ?? null), expiresAt });
+      return true;
+    });
+  }
+  async reconcileClaim(key, fingerprint, claimToken, response, { reason, expiresAt = this.clock() + this.ttlMs } = {}) {
+    this.#assertReady(); key = normalizeKey(key); this.#validateExpiry(expiresAt);
+    validateReason(reason);
+    return this.#withLock(async () => {
+      await this.#reload(); this.#validateExpiry(expiresAt);
+      const existing = this.#records.get(key);
+      if (!existing || existing.status !== 'pending' || existing.expiresAt > this.clock() || existing.fingerprint !== fingerprint || !claimToken || existing.claimToken !== claimToken) return false;
+      await this.#putRecord({ ...existing, status: 'completed', response: clone(response ?? null), expiresAt, reconciliation: { reason: reason.trim(), at: this.clock() } });
+      return true;
+    });
+  }
+  async releaseClaim(key, fingerprint, claimToken, reason) {
+    this.#assertReady(); key = normalizeKey(key);
+    validateReason(reason);
+    return this.#withLock(async () => {
+      await this.#reload();
+      const existing = this.#records.get(key);
+      if (!existing || existing.status !== 'pending' || existing.expiresAt > this.clock() || existing.fingerprint !== fingerprint || !claimToken || existing.claimToken !== claimToken) return false;
+      await this.#append({ schemaVersion: SCHEMA_VERSION, op: 'delete', key, reason: reason.trim(), reconciledAt: this.clock() });
+      this.#records.delete(key);
       return true;
     });
   }
@@ -68,7 +91,7 @@ export class DurableIdempotencyStore {
   }
   async delete(key) {
     this.#assertReady(); key = normalizeKey(key);
-    return this.#withLock(async () => { await this.#reload(); if (!this.#records.has(key)) return false; await this.#append({ schemaVersion: SCHEMA_VERSION, op: 'delete', key }); this.#records.delete(key); return true; });
+    return this.#withLock(async () => { await this.#reload(); if (!this.#records.has(key)) return false; if (this.#records.get(key).status === 'pending') throw Object.assign(new Error('Pending claims require reconciliation'), { code: 'IDEMPOTENCY_CLAIM_REQUIRED' }); await this.#append({ schemaVersion: SCHEMA_VERSION, op: 'delete', key }); this.#records.delete(key); return true; });
   }
   async compact() {
     this.#assertReady();
@@ -108,7 +131,7 @@ export class DurableIdempotencyStore {
       if (!['pending', 'completed'].includes(status)) throw new Error('Invalid idempotency status');
       records.set(key, { ...item.value, schemaVersion: SCHEMA_VERSION, key, status, createdAt: item.createdAt, expiresAt: item.expiresAt });
     }
-    for (const [key, record] of records) if (record.expiresAt <= this.clock()) records.delete(key);
+    for (const [key, record] of records) if (record.expiresAt <= this.clock() && record.status === 'completed') records.delete(key);
     this.#records = records;
   }
   async #withLock(operation) {
@@ -125,5 +148,6 @@ export class DurableIdempotencyStore {
 }
 function journalEntry(record) { const { key, createdAt, expiresAt, ...value } = record; return { schemaVersion: SCHEMA_VERSION, op: 'put', key, value, createdAt, expiresAt }; }
 function normalizeKey(key) { if (typeof key !== 'string' || !key.trim() || key.length > 4096) throw new TypeError('key must be a non-empty string of at most 4096 characters'); return key; }
+function validateReason(reason) { if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024) throw new TypeError('A reconciliation reason of at most 1024 characters is required'); }
 function clone(value) { return structuredClone(value); }
 export { SCHEMA_VERSION as DURABLE_IDEMPOTENCY_SCHEMA_VERSION };

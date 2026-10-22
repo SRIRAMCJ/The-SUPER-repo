@@ -62,7 +62,7 @@ test('request guard returns 409 while a durable idempotency request is in flight
   }
 });
 
-test('expired owners cannot complete a replacement claim and pending claims are never evicted', async () => {
+test('expired pending claims require reconciliation and stale workers cannot complete them', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'super-claim-fencing-'));
   let now = 1000;
   try {
@@ -71,14 +71,44 @@ test('expired owners cannot complete a replacement claim and pending claims are 
     await assert.rejects(store.claim('other', 'other'), { code: 'IDEMPOTENCY_CAPACITY' });
     assert.equal((await store.claim('request', 'same')).state, 'in_progress');
     now = 1200;
-    const replacement = await store.claim('request', 'same');
-    assert.notEqual(old.record.claimToken, replacement.record.claimToken);
+    assert.equal((await store.claim('request', 'same')).state, 'recovery_required');
+    await assert.rejects(store.claim('other', 'other'), { code: 'IDEMPOTENCY_CAPACITY' });
+    await assert.rejects(store.delete('request'), { code: 'IDEMPOTENCY_CLAIM_REQUIRED' });
     assert.equal(await store.completeClaim('request', 'same', old.record.claimToken, 'stale'), false);
-    assert.equal(await store.completeClaim('request', 'same', replacement.record.claimToken, 'fresh'), true);
     await store.compact();
     const reopened = await new DurableIdempotencyStore({ filePath: join(dir, 'journal'), clock: () => now }).init();
+    assert.equal((await reopened.claim('request', 'same')).state, 'recovery_required');
+    assert.equal(await reopened.reconcileClaim('request', 'same', 'wrong', 'fresh', { reason: 'effect verified' }), false);
+    assert.equal(await reopened.reconcileClaim('request', 'same', old.record.claimToken, 'fresh', { reason: 'effect verified' }), true);
     assert.equal((await reopened.claim('request', 'same')).record.response, 'fresh');
+    assert.equal((await reopened.get('request')).reconciliation.reason, 'effect verified');
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('releasing a verified no-effect claim permits a new token and fences the old one', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'super-claim-release-'));
+  let now = 1000;
+  try {
+    const store = await new DurableIdempotencyStore({ filePath: join(dir, 'journal'), clock: () => now, ttlMs: 100 }).init();
+    const old = await store.claim('request', 'same');
+    now = 1200;
+    assert.equal(await store.releaseClaim('request', 'same', old.record.claimToken, 'no effect found'), true);
+    const next = await store.claim('request', 'same');
+    assert.notEqual(next.record.claimToken, old.record.claimToken);
+    assert.equal(await store.completeClaim('request', 'same', old.record.claimToken, 'stale'), false);
+    assert.equal(await store.completeClaim('request', 'same', next.record.claimToken, 'new'), true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('in-memory guard holds expired pending claims until the owner is reconciled', async () => {
+  let now = 1000;
+  const guard = new RuntimeRequestGuard({ clock: () => now, idempotencyTtlMs: 100, maxIdempotencyRecords: 1 });
+  const request = { method: 'POST', path: '/commands', clientKey: 'client', idempotencyKey: 'one', body: {} };
+  const claim = await guard.admit(request);
+  now = 1200;
+  assert.equal((await guard.admit(request)).decision, 'recovery_required');
+  assert.equal(await guard.complete(claim, { status: 200 }), false);
+  assert.equal((await guard.admit({ ...request, idempotencyKey: 'two' })).error.code, 'IDEMPOTENCY_CAPACITY');
 });
 
 test('claim ownership is atomic across separate Node processes', async () => {
@@ -92,6 +122,22 @@ test('claim ownership is atomic across separate Node processes', async () => {
     const output = await Promise.all([1, 2].map(() => run(process.execPath, ['--input-type=module', '-e', script, join(dir, 'journal')])));
     assert.deepEqual(output.map((x) => x.stdout.trim()).sort(), ['claimed', 'in_progress']);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a killed claimant leaves an ambiguous effect blocked after expiry', async () => {
+  const { spawn } = await import('node:child_process');
+  const dir = await mkdtemp(join(tmpdir(), 'super-ambiguous-claim-'));
+  const filePath = join(dir, 'journal');
+  const moduleUrl = new URL('../src/durable-idempotency.js', import.meta.url).href;
+  const script = `import {DurableIdempotencyStore} from ${JSON.stringify(moduleUrl)}; const store=await new DurableIdempotencyStore({filePath:process.argv[1],clock:()=>1000,ttlMs:100}).init(); await store.claim('effect','fp'); console.log('claimed'); setInterval(()=>{},1000);`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script, filePath], { stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); child.once('exit', () => reject(new Error('claimant exited early'))); });
+    child.kill('SIGKILL');
+    await new Promise((resolve) => child.once('exit', resolve));
+    const replacement = await new DurableIdempotencyStore({ filePath, clock: () => 1200, ttlMs: 100 }).init();
+    assert.equal((await replacement.claim('effect', 'fp')).state, 'recovery_required');
+  } finally { child.kill('SIGKILL'); await rm(dir, { recursive: true, force: true }); }
 });
 
 test('kernel lock times out and a killed owner releases it', async () => {

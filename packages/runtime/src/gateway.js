@@ -44,7 +44,9 @@ export class ControlPlaneGateway {
     if (authorization === true && this.requireAuthenticatedIdentity) return failure(403, 'AUTHENTICATED_IDENTITY_REQUIRED', 'A verified principal is required');
     // Only the authorization callback may establish a trusted client key.
     // A raw request field or client-supplied header cannot select a principal.
-    const trustedRequest = { ...request, clientKey: authorization === true ? undefined : `auth:${authorization.principal.trim()}` };
+    const trustedRequest = { ...request,
+      headers: Object.fromEntries(Object.entries(request.headers ?? {}).filter(([name]) => !/^(authorization|proxy-authorization)$/i.test(name))),
+      clientKey: authorization === true ? undefined : `auth:${authorization.principal.trim()}` };
 
     let admission;
     if (this.requestGuard) {

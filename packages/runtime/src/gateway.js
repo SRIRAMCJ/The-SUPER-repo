@@ -7,7 +7,7 @@ import { RuntimeCommandBus } from './command-bus.js';
 const SCHEMA_VERSION = '0.1.0';
 
 export class ControlPlaneGateway {
-  constructor({ controlPlane, operations = null, commands = null, authorize = null, maxBodyBytes = 65536, shutdownAdmission = null, requestGuard = null } = {}) {
+  constructor({ controlPlane, operations = null, commands = null, authorize = null, maxBodyBytes = 65536, shutdownAdmission = null, requestGuard = null, preAuthLimiter = null } = {}) {
     if (!controlPlane || typeof controlPlane.getHealth !== 'function' || typeof controlPlane.snapshot !== 'function') throw new TypeError('ControlPlaneGateway requires a compatible runtime control plane');
     if (operations && typeof operations.getOperations !== 'function') throw new TypeError('operations must expose getOperations()');
     if (commands && typeof commands.list !== 'function' || commands && typeof commands.execute !== 'function') throw new TypeError('commands must expose list() and execute()');
@@ -15,6 +15,7 @@ export class ControlPlaneGateway {
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) throw new TypeError('maxBodyBytes must be an integer >= 1024');
     if (shutdownAdmission && (typeof shutdownAdmission.admit !== 'function' || typeof shutdownAdmission.release !== 'function')) throw new TypeError('shutdownAdmission must expose admit() and release()');
     if (requestGuard && (typeof requestGuard.admit !== 'function' || typeof requestGuard.complete !== 'function')) throw new TypeError('requestGuard must expose admit() and complete()');
+    if (preAuthLimiter && typeof preAuthLimiter.consume !== 'function') throw new TypeError('preAuthLimiter must expose consume()');
     this.controlPlane = controlPlane;
     this.operations = operations ?? new RuntimeOperations({ controlPlane });
     this.commands = commands ?? new RuntimeCommandBus({ controlPlane, operations: this.operations });
@@ -24,6 +25,7 @@ export class ControlPlaneGateway {
     this.maxBodyBytes = maxBodyBytes;
     this.shutdownAdmission = shutdownAdmission;
     this.requestGuard = requestGuard;
+    this.preAuthLimiter = preAuthLimiter;
     this.server = null;
   }
 
@@ -33,6 +35,13 @@ export class ControlPlaneGateway {
     const rawPath = String(request.path ?? '/');
     const parsed = new URL(rawPath, 'http://super.local');
     const route = parsed.pathname.replace(/\/+$/, '') || '/';
+    if (this.preAuthLimiter) {
+      let decision;
+      try { decision = await this.preAuthLimiter.consume(`preauth:${String(request.remoteAddress ?? 'unknown').slice(0, 240)}`); }
+      catch { return failure(503, 'PRE_AUTH_LIMITER_UNAVAILABLE', 'Authentication admission unavailable'); }
+      if (decision?.allowed === false) return failure(429, 'PRE_AUTH_RATE_LIMITED', 'Authentication rate limit exceeded');
+      if (decision?.allowed !== true) return failure(503, 'PRE_AUTH_LIMITER_UNAVAILABLE', 'Authentication admission unavailable');
+    }
     let authorization;
     try { authorization = await this.authorize({ method, path: route, request }); }
     catch { return failure(403, 'AUTHORIZATION_ERROR', 'Authorization failed'); }

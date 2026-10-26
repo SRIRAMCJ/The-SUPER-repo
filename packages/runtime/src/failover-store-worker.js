@@ -12,8 +12,16 @@ try {
   }
   const request = JSON.parse(input);
   let parsed;
+  let missing = false;
   try { parsed = JSON.parse(await readFile(file, 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT' && !request.observed) parsed = []; else throw error; }
+  catch (error) { if (error.code === 'ENOENT') { missing = true; parsed = []; } else throw error; }
+  let initialized = false;
+  try {
+    const marker = JSON.parse(await readFile(`${file}.initialized`, 'utf8'));
+    if (marker?.schemaVersion !== '0.1.0' || marker?.initialized !== true) throw fault('FAILOVER_STORE_CORRUPT');
+    initialized = true;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (missing && (initialized || request.observed)) throw fault('FAILOVER_STORE_MISSING');
   if (!Array.isArray(parsed) || parsed.length > 10_000) throw fault('FAILOVER_STORE_CORRUPT');
   const records = new Map();
   for (const record of parsed) {
@@ -24,6 +32,11 @@ try {
         !Number.isSafeInteger(record.version) || record.version < 0 ||
         !Number.isSafeInteger(record.expiresAt) || record.expiresAt < 0 || records.has(record.name)) throw fault('FAILOVER_STORE_CORRUPT');
     records.set(record.name, record);
+  }
+  if (!missing && !initialized) {
+    // Existing stores from before the marker upgrade acquire one on first access.
+    await writeAtomicJson(`${file}.initialized`, { schemaVersion: '0.1.0', initialized: true });
+    initialized = true;
   }
   const { action, name, owner, token, epoch, leaseMs, result } = request;
   if (typeof name !== 'string' || !name.trim()) throw fault('FAILOVER_NAME_INVALID');
@@ -50,7 +63,10 @@ try {
       } });
     } else next = { ...current, token: null, expiresAt: 0 };
   } else if (action !== 'inspect') throw fault('FAILOVER_REQUEST_INVALID');
-  if (next !== current) { records.set(name, next); await writeAtomicJson(file, [...records.values()]); }
+  if (next !== current) {
+    if (!initialized) await writeAtomicJson(`${file}.initialized`, { schemaVersion: '0.1.0', initialized: true });
+    records.set(name, next); await writeAtomicJson(file, [...records.values()]);
+  }
   process.stdout.write(JSON.stringify({ ok: true, record: next, observed: parsed.length > 0 || next !== null }));
 } catch (error) {
   process.stdout.write(JSON.stringify({ ok: false, code: typeof error?.code === 'string' && error.code.startsWith('FAILOVER_') ? error.code : 'FAILOVER_STORE_ERROR' }));

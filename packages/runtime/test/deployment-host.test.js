@@ -41,7 +41,7 @@ test('deployment host recovers once per incident across restart and closes admis
     incident = 'second';
     await eventually(() => calls === 2);
     await restarted.shutdown();
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); }
 });
 
 test('shutdown aborts an in-flight recovery and waits for its orchestration to settle', async () => {

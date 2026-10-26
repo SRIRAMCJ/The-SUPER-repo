@@ -13,6 +13,7 @@ export class RuntimeRequestGuard {
     clock = () => Date.now(),
     maxRequests = 60,
     windowMs = 60_000,
+    maxRateWindows = 10_000,
     maxBodyBytes = 65_536,
     idempotencyTtlMs = 300_000,
     maxIdempotencyRecords = 1_000,
@@ -22,7 +23,7 @@ export class RuntimeRequestGuard {
     idempotencyStore = null,
   } = {}) {
     if (typeof clock !== 'function') throw new TypeError('clock must be a function');
-    for (const [name, value] of [['maxRequests', maxRequests], ['windowMs', windowMs], ['maxBodyBytes', maxBodyBytes], ['idempotencyTtlMs', idempotencyTtlMs], ['maxIdempotencyRecords', maxIdempotencyRecords]]) {
+    for (const [name, value] of [['maxRequests', maxRequests], ['windowMs', windowMs], ['maxRateWindows', maxRateWindows], ['maxBodyBytes', maxBodyBytes], ['idempotencyTtlMs', idempotencyTtlMs], ['maxIdempotencyRecords', maxIdempotencyRecords]]) {
       if (!Number.isInteger(value) || value < 1) throw new TypeError(name + ' must be a positive integer');
     }
     if (keyResolver !== null && typeof keyResolver !== 'function') throw new TypeError('keyResolver must be a function');
@@ -32,6 +33,7 @@ export class RuntimeRequestGuard {
     this.clock = clock;
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
+    this.maxRateWindows = maxRateWindows;
     this.maxBodyBytes = maxBodyBytes;
     this.idempotencyTtlMs = idempotencyTtlMs;
     this.maxIdempotencyRecords = maxIdempotencyRecords;
@@ -42,7 +44,6 @@ export class RuntimeRequestGuard {
   }
 
   async admit(request = {}) {
-    this.#purge();
     const method = String(request.method ?? 'GET').toUpperCase();
     if (!METHODS.has(method)) return denied('METHOD_NOT_ALLOWED', 'Unsupported HTTP method');
     const path = normalizePath(request.path);
@@ -64,7 +65,13 @@ export class RuntimeRequestGuard {
       }
     } else {
       const window = this.#windows.get(principal);
-      if (!window || now - window.startedAt >= this.windowMs) this.#windows.set(principal, { startedAt: now, count: 1 });
+      if (!window || now - window.startedAt >= this.windowMs) {
+        if (!window && this.#windows.size >= this.maxRateWindows) {
+          this.#purge();
+          if (this.#windows.size >= this.maxRateWindows) return denied('RATE_LIMIT_CAPACITY', 'Rate limit capacity exhausted');
+        }
+        this.#windows.set(principal, { startedAt: now, count: 1 });
+      }
       else if (window.count >= this.maxRequests) return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'denied', error: { code: 'RATE_LIMITED', message: 'Request rate limit exceeded' }, retryAfterMs: Math.max(1, this.windowMs - (now - window.startedAt)), identity });
       else window.count += 1;
     }
@@ -83,7 +90,8 @@ export class RuntimeRequestGuard {
         if (claim.state === 'in_progress') return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, claim.record.expiresAt - now) });
         return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey, fingerprint, claimToken: claim.record.claimToken, identity });
       }
-      const existing = this.#idempotency.get(cacheKey);
+      let existing = this.#idempotency.get(cacheKey);
+      if (existing?.status === 'completed' && existing.expiresAt <= now) { this.#idempotency.delete(cacheKey); existing = null; }
       if (existing) {
         if (existing.fingerprint !== fingerprint) return denied('IDEMPOTENCY_CONFLICT', 'Idempotency key was reused with a different request');
         if (existing.status === 'pending') return existing.expiresAt <= now
@@ -91,7 +99,10 @@ export class RuntimeRequestGuard {
           : freeze({ schemaVersion: SCHEMA_VERSION, decision: 'in_progress', cacheKey, identity, retryAfterMs: Math.max(1, existing.expiresAt - now) });
         return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'replay', cacheKey, response: existing.response, identity });
       }
-      if (this.#idempotency.size >= this.maxIdempotencyRecords) return denied('IDEMPOTENCY_CAPACITY', 'Idempotency capacity exhausted');
+      if (this.#idempotency.size >= this.maxIdempotencyRecords) {
+        this.#purge();
+        if (this.#idempotency.size >= this.maxIdempotencyRecords) return denied('IDEMPOTENCY_CAPACITY', 'Idempotency capacity exhausted');
+      }
       const claimToken = randomUUID();
       this.#idempotency.set(cacheKey, { status: 'pending', fingerprint, claimToken, expiresAt: now + this.idempotencyTtlMs });
       return freeze({ schemaVersion: SCHEMA_VERSION, decision: 'accepted', cacheKey, fingerprint, claimToken, identity });
@@ -101,7 +112,6 @@ export class RuntimeRequestGuard {
 
   complete(admission, response) {
     if (!admission || admission.decision !== 'accepted' || !admission.cacheKey) return false;
-    this.#purge();
     const now = this.clock();
     const record = freeze({ schemaVersion: SCHEMA_VERSION, status: 'completed', fingerprint: admission.fingerprint, response: response === undefined ? null : response, createdAt: now, expiresAt: now + this.idempotencyTtlMs });
     if (this.idempotencyStore) return this.idempotencyStore.completeClaim(admission.cacheKey, admission.fingerprint, admission.claimToken, response, { expiresAt: record.expiresAt });
@@ -117,7 +127,7 @@ export class RuntimeRequestGuard {
     return freeze({
       schemaVersion: SCHEMA_VERSION,
       type: 'runtime-request-guard',
-      limits: { maxRequests: this.maxRequests, windowMs: this.windowMs, maxBodyBytes: this.maxBodyBytes, idempotencyTtlMs: this.idempotencyTtlMs },
+      limits: { maxRequests: this.maxRequests, windowMs: this.windowMs, maxRateWindows: this.maxRateWindows, maxBodyBytes: this.maxBodyBytes, idempotencyTtlMs: this.idempotencyTtlMs },
       activeRateWindows: this.#windows.size,
       retainedIdempotencyRecords: this.#idempotency.size,
       identity: this.identity.snapshot(),

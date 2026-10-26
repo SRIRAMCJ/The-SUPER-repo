@@ -48,7 +48,16 @@ test('observed state disappearance fails closed', () => temporary(async (file) =
   const store = new FileFailoverStore(file);
   await store.claim('runtime', 'a');
   await unlink(file);
-  await assert.rejects(store.claim('runtime', 'b'), { code: 'FAILOVER_STORE_ERROR' });
+  await assert.rejects(store.claim('runtime', 'b'), { code: 'FAILOVER_STORE_MISSING' });
+  await assert.rejects(new FileFailoverStore(file).claim('runtime', 'b'), { code: 'FAILOVER_STORE_MISSING' });
+}));
+
+test('an older state file acquires an initialization marker before disappearance', () => temporary(async (file) => {
+  await writeFile(file, JSON.stringify([{ schemaVersion: '0.1.0', name: 'runtime', owner: 'a', token: null,
+    epoch: 8, version: 0, expiresAt: 0, result: null }]));
+  assert.equal((await new FileFailoverStore(file).inspect('runtime')).epoch, 8);
+  await unlink(file);
+  await assert.rejects(new FileFailoverStore(file).claim('runtime', 'b'), { code: 'FAILOVER_STORE_MISSING' });
 }));
 
 test('corrupted lease metadata cannot be reclaimed', () => temporary(async (file) => {

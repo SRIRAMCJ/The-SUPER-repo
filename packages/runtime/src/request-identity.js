@@ -1,10 +1,12 @@
+import { isIP } from 'node:net';
 const SCHEMA_VERSION = '0.1.0';
 
 export class RuntimeRequestIdentity {
   constructor({ trustedProxies = [], allowForwarded = false, header = 'x-client-id' } = {}) {
     if (!Array.isArray(trustedProxies)) throw new TypeError('trustedProxies must be an array');
     if (typeof allowForwarded !== 'boolean' || typeof header !== 'string' || !header.trim()) throw new TypeError('invalid request identity configuration');
-    this.trustedProxies = new Set(trustedProxies.map((value) => normalize(value)).filter(Boolean));
+    if (trustedProxies.some((value) => typeof value !== 'string' || !isIP(value))) throw new TypeError('trustedProxies must contain IP addresses');
+    this.trustedProxies = new Set(trustedProxies);
     this.allowForwarded = allowForwarded;
     this.header = header.toLowerCase();
   }
@@ -17,7 +19,7 @@ export class RuntimeRequestIdentity {
 
     const remote = normalize(request.remoteAddress ?? request.socket?.remoteAddress);
     if (this.allowForwarded && remote && this.trustedProxies.has(remote)) {
-      const forwarded = firstForwarded(headers['x-forwarded-for']);
+      const forwarded = firstUntrustedHop(headers['x-forwarded-for'], this.trustedProxies);
       if (forwarded) return freeze({ schemaVersion: SCHEMA_VERSION, source: 'forwarded-for', principal: forwarded });
     }
 
@@ -41,9 +43,12 @@ export class RuntimeRequestIdentity {
 function normalizeHeaders(headers = {}) {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), Array.isArray(value) ? value[0] : value]));
 }
-function firstForwarded(value) {
-  if (typeof value !== 'string') return null;
-  return normalize(value.split(',')[0]);
+function firstUntrustedHop(value, trustedProxies) {
+  if (typeof value !== 'string' || value.length > 2048) return null;
+  const hops = value.split(',').map((part) => part.trim());
+  if (!hops.length || hops.length > 16 || hops.some((hop) => !isIP(hop))) return null;
+  for (let index = hops.length - 1; index >= 0; index--) if (!trustedProxies.has(hops[index])) return hops[index];
+  return hops[0];
 }
 function normalize(value) {
   const text = String(value ?? '').trim();

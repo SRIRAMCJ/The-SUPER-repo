@@ -200,3 +200,30 @@ test('expired command outcome is quarantined instead of executed again', async (
   assert.equal((await gateway.handle(request)).body.error.code, 'IDEMPOTENCY_RECOVERY_REQUIRED');
   assert.equal(calls, 1);
 });
+
+test('rate window capacity fails closed and expired windows are reclaimed', async () => {
+  let now = 1000;
+  const guard = new RuntimeRequestGuard({ clock: () => now, maxRateWindows: 2, windowMs: 100 });
+  const gateway = new ControlPlaneGateway({ controlPlane: controlPlane(), requestGuard: guard,
+    authorize: ({ request }) => ({ allowed: true, principal: request.headers.user }) });
+  const call = (user) => gateway.handle({ method: 'GET', path: '/health', headers: { user } });
+  assert.equal((await call('a')).status, 200);
+  assert.equal((await call('b')).status, 200);
+  assert.equal((await call('c')).body.error.code, 'RATE_LIMIT_CAPACITY');
+  assert.equal(guard.snapshot().activeRateWindows, 2);
+  now = 1100;
+  assert.equal((await call('c')).status, 200);
+  assert.equal(guard.snapshot().activeRateWindows, 1);
+});
+
+test('completed replay capacity is reclaimed after expiry without replaying stale responses', async () => {
+  let now = 1000;
+  const guard = new RuntimeRequestGuard({ clock: () => now, maxIdempotencyRecords: 1, idempotencyTtlMs: 100 });
+  const request = (key) => ({ method: 'POST', path: '/commands', clientKey: 'client', idempotencyKey: key, body: {} });
+  const first = await guard.admit(request('one'));
+  assert.equal(await guard.complete(first, { status: 200 }), true);
+  assert.equal((await guard.admit(request('two'))).error.code, 'IDEMPOTENCY_CAPACITY');
+  now = 1100;
+  assert.equal((await guard.admit(request('two'))).decision, 'accepted');
+  assert.equal((await guard.admit(request('one'))).error.code, 'IDEMPOTENCY_CAPACITY');
+});

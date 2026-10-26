@@ -64,6 +64,25 @@ test('shutdown aborts an in-flight recovery and waits for its orchestration to s
   assert.equal(lifecycle.getState().state, 'stopped');
 });
 
+test('shutdown waits for in-flight polling even when coordinator cleanup fails', async () => {
+  let entered;
+  const polling = new Promise((resolve) => { entered = resolve; });
+  let finish;
+  const settled = new Promise((resolve) => { finish = resolve; });
+  const coordinator = {
+    admission: { forceStop() {} },
+    start: async () => {},
+    shutdown: async () => { throw new Error('cleanup failed'); },
+  };
+  const host = new RuntimeDeploymentHost({ coordinator, failover: { attempt: () => {} },
+    name: 'service', incidentId: async () => { entered(); await settled; return null; }, intervalMs: 10 });
+  await host.start();
+  await polling;
+  const stopping = host.shutdown();
+  finish();
+  await assert.rejects(stopping, /cleanup failed/);
+});
+
 test('a stuck incident provider cannot hold shutdown open', async () => {
   const lifecycle = new RuntimeLifecycleManager();
   const coordinator = new RuntimeShutdownCoordinator({ lifecycle, admission: new RuntimeShutdownAdmission() });

@@ -66,7 +66,7 @@ export class ControlPlaneGateway {
       if (admission.decision === 'recovery_required') return failure(409, 'IDEMPOTENCY_RECOVERY_REQUIRED', 'Request outcome requires reconciliation');
       if (admission.decision === 'denied') {
         const code = admission.error.code;
-        return failure(code === 'RATE_LIMITED' ? 429 : code.endsWith('_UNAVAILABLE') ? 503 : code === 'BODY_TOO_LARGE' ? 413 : code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_CAPACITY' ? 409 : 400, code, admission.error.message);
+        return failure(code === 'RATE_LIMITED' ? 429 : code === 'RATE_LIMIT_CAPACITY' || code.endsWith('_UNAVAILABLE') ? 503 : code === 'BODY_TOO_LARGE' ? 413 : code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_CAPACITY' ? 409 : 400, code, admission.error.message);
       }
     }
     const result = await this.#dispatch(trustedRequest, method, route, parsed);

@@ -57,7 +57,13 @@ export class RuntimeDeploymentHost {
     catch (error) { this.#operation = null; throw error; }
     const active = this.#pending;
     const operation = (async () => {
-      try { await active; return await draining; }
+      try {
+        const [poll, shutdown] = await Promise.allSettled([active, draining]);
+        if (poll.status === 'rejected' && shutdown.status === 'rejected') throw new AggregateError([poll.reason, shutdown.reason], 'Deployment host shutdown failed');
+        if (shutdown.status === 'rejected') throw shutdown.reason;
+        if (poll.status === 'rejected') throw poll.reason;
+        return shutdown.value;
+      }
       finally { this.#signals?.dispose(); this.#signals = null; this.#operation = null; this.#pending = null; }
     })();
     this.#pending = operation;

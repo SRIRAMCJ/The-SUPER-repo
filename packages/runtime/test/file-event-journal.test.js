@@ -82,3 +82,24 @@ test('explicit compaction frees bounded capacity and exposes gaps to old cursors
   const restarted = new FileEventJournal(directory, { maxRecords: 3 });
   assert.equal((await restarted.replay({ afterSequence: 2 })).events.length, 2);
 }));
+
+test('explicit orphan recovery promotes one valid interrupted record and rejects corruption', () => temporary(async (directory) => {
+  const journal = new FileEventJournal(directory);
+  await journal.append({ type: 'one' });
+  const committedHead = await readFile(path.join(directory, 'head.json'), 'utf8');
+  await journal.append({ type: 'two' });
+  await writeFile(path.join(directory, 'head.json'), committedHead);
+  await assert.rejects(journal.replay(), { code: 'EVENT_JOURNAL_CORRUPT' });
+  const recovered = await new FileEventJournal(directory).recoverOrphan();
+  assert.equal(recovered.recovered, true);
+  assert.equal(recovered.head.sequence, 2);
+  assert.deepEqual((await journal.replay()).events.map((item) => item.event.type), ['one', 'two']);
+  assert.equal((await journal.recoverOrphan()).recovered, false);
+  const head = await readFile(path.join(directory, 'head.json'), 'utf8');
+  await journal.append({ type: 'three' });
+  await writeFile(path.join(directory, 'head.json'), head);
+  const orphanPath = path.join(directory, '000000000003.json');
+  await writeFile(orphanPath, (await readFile(orphanPath, 'utf8')).replace('three', 'corrupt'));
+  await assert.rejects(journal.recoverOrphan(), { code: 'EVENT_JOURNAL_CORRUPT' });
+  assert.equal(JSON.parse(await readFile(path.join(directory, 'head.json'), 'utf8')).sequence, 2);
+}));

@@ -116,6 +116,30 @@ export class FileEventJournal {
     });
   }
 
+  // Explicitly promote the one complete record left by an interrupted head
+  // replacement. Never invent or skip a missing committed record.
+  async recoverOrphan() {
+    return this.#locked(async () => {
+      const head = await this.#head(false);
+      const base = await this.#base(head);
+      let previousHash = base.hash;
+      for (let index = base.sequence + 1; index <= head.sequence; index++) {
+        const record = await this.#verifyRecord(index);
+        if (record.previousHash !== previousHash) throw fault('EVENT_JOURNAL_CORRUPT');
+        previousHash = record.hash;
+      }
+      if (previousHash !== head.hash) throw fault('EVENT_JOURNAL_CORRUPT');
+      const sequence = head.sequence + 1;
+      if (!await exists(this.#recordPath(sequence))) return { recovered: false, head: { ...head } };
+      if (head.sequence - base.sequence >= this.maxRecords || await exists(this.#recordPath(sequence + 1))) throw fault('EVENT_JOURNAL_CORRUPT');
+      const orphan = await this.#verifyRecord(sequence);
+      if (orphan.previousHash !== head.hash) throw fault('EVENT_JOURNAL_CORRUPT');
+      const next = { sequence, hash: orphan.hash };
+      await writeAtomicJson(this.#headPath(), next);
+      return { recovered: true, head: next };
+    });
+  }
+
   #headPath() { return path.join(this.directory, 'head.json'); }
   #basePath() { return path.join(this.directory, 'base.json'); }
   #recordPath(sequence) { return path.join(this.directory, `${String(sequence).padStart(12, '0')}.json`); }

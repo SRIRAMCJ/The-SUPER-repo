@@ -64,3 +64,31 @@ test('a forged cursor and corrupt checkpoint fail closed', () => temporary(async
   await writeFile(checkpointPath, JSON.stringify({ sequence: 1, hash: 'f'.repeat(64) }));
   await assert.rejects(new FileEventConsumer({ journal, checkpointPath, listener: () => {} }).runOnce(), { code: 'EVENT_JOURNAL_CORRUPT' });
 }));
+
+test('a killed consumer releases its lock and retries an effect without a checkpoint', () => temporary(async (directory) => {
+  const journalPath = path.join(directory, 'journal');
+  const checkpointPath = path.join(directory, 'checkpoint.json');
+  const effectPath = path.join(directory, 'effect.txt');
+  await new FileEventJournal(journalPath).append({ type: 'work', id: 'same-event' });
+  const moduleUrl = new URL('../src/index.js', import.meta.url).href;
+  const script = `import { appendFile } from 'node:fs/promises'; import { FileEventJournal, FileEventConsumer } from ${JSON.stringify(moduleUrl)};
+    await new FileEventConsumer({ journal: new FileEventJournal(process.argv[1]), checkpointPath: process.argv[2],
+      listener: async (event) => { await appendFile(process.argv[3], event.id + '\\n'); console.log('effect'); await new Promise(() => {}); } }).runOnce();`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script, journalPath, checkpointPath, effectPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    let timer;
+    try {
+      await Promise.race([new Promise((resolve, reject) => {
+        child.stdout.on('data', (chunk) => { if (chunk.toString().includes('effect')) resolve(); });
+        child.on('error', reject);
+        child.on('exit', (code) => reject(new Error(`consumer exited ${code}`)));
+      }), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('effect did not start')), 3000); })]);
+    } finally { clearTimeout(timer); }
+    child.kill('SIGKILL');
+    await new Promise((resolve) => child.once('close', resolve));
+    const replacement = new FileEventConsumer({ journal: new FileEventJournal(journalPath), checkpointPath,
+      listener: (event) => appendFile(effectPath, `${event.id}\n`) });
+    assert.equal((await replacement.runOnce()).delivered, 1);
+    assert.deepEqual((await readFile(effectPath, 'utf8')).trim().split('\n'), ['same-event', 'same-event']);
+  } finally { child.kill('SIGKILL'); }
+}));

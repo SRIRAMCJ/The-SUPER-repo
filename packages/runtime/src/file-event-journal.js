@@ -36,7 +36,7 @@ export class FileEventJournal {
       if (await exists(this.#recordPath(head.sequence + 1))) throw fault('EVENT_JOURNAL_CORRUPT');
       const sequence = head.sequence + 1;
       const hash = digest(head.hash, sequence, payload);
-      await writeAtomicJson(this.#recordPath(sequence), { sequence, previousHash: head.hash, hash, event: copy });
+      await writeAtomicJson(this.#recordPath(sequence), { sequence, previousHash: head.hash, hash, event: copy }, { space: 0 });
       await writeAtomicJson(this.#headPath(), { sequence, hash });
       return { sequence, hash };
     });

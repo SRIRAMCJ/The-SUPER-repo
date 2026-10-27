@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { DistributedCapabilityGate } from '../src/distributed-capability.js';
 import { RemoteExecutionTransport } from '../src/remote-transport.js';
 
+test('default remote request IDs remain unique in a same-tick burst', () => {
+  const transport = new RemoteExecutionTransport({ distributed: { execute: async () => ({ status: 'succeeded' }) } });
+  const ids = new Set();
+  for (let i = 0; i < 100; i++) ids.add(transport.idFactory('remote'));
+  assert.equal(ids.size, 100);
+});
+
 function setup() {
   let now = new Date('2026-09-17T00:00:00.000Z');
   const distributed = new DistributedCapabilityGate({ clock: () => now, leaseTtlMs: 5_000 });

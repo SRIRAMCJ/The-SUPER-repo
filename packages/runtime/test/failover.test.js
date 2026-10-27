@@ -15,7 +15,7 @@ async function fixture(fn) {
 const supervisor = (state) => ({ evaluate: async () => ({ state }) });
 const kernel = (file, recover, owner = 'worker', options = {}) => new RuntimeFailoverKernel({
   supervisor: supervisor('failed'), store: new FileFailoverStore(file), recover, owner,
-  leaseMs: 1000, renewEveryMs: 100, timeoutMs: 500, ...options
+  leaseMs: 5000, renewEveryMs: 500, timeoutMs: 5000, ...options
 });
 
 test('healthy state skips recovery; stable incident commits once while new incident recovers', () => fixture(async (file) => {

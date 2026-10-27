@@ -23,7 +23,7 @@ export class FileObservabilityCheckpoint {
       if (previous && (previous.cursor.sequence > payload.cursor.sequence ||
           (previous.cursor.sequence === payload.cursor.sequence && previous.cursor.hash !== payload.cursor.hash))) throw fault('OBSERVABILITY_CHECKPOINT_STALE');
       if (!previous) await writeAtomicJson(`${this.filePath}.initialized`, { schemaVersion: '0.1.0', initialized: true });
-      await writeAtomicJson(this.filePath, wrapper);
+      await writeAtomicJson(this.filePath, wrapper, { space: 0 });
       return { ...payload.cursor };
     });
   }

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EventBus, ObservabilityEngine, RuntimeEventTransport } from '../src/index.js';
+import { EventBus, ObservabilityEngine, RuntimeEventTransport, FileEventJournal } from '../src/index.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 test('observability subscribes to the event bus and tracks execution lifecycle metrics', () => {
   const eventBus = new EventBus();
@@ -100,4 +103,30 @@ test('observability bounds metric series and active execution cardinality', () =
   assert.ok(metrics.get('metrics.dropped_series') > 0);
   assert.equal(metrics.get('active_executions.evicted'), 1);
   assert.equal(snapshot.activeExecutions, 2);
+});
+
+test('observability rebuilds from journal and incrementally syncs without duplicate metrics', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'super-observability-journal-'));
+  try {
+    const journal = new FileEventJournal(directory);
+    const first = await journal.append({ type: 'execution.started', executionId: 'e1', timestamp: '2026-01-01T00:00:00.000Z' });
+    await journal.append({ type: 'execution.completed', executionId: 'e1', timestamp: '2026-01-01T00:00:01.000Z' });
+    const restored = new ObservabilityEngine();
+    assert.deepEqual(await restored.syncFromJournal(journal), { applied: 2, sequence: 2, head: 2 });
+    assert.equal((await restored.syncFromJournal(journal)).applied, 0);
+    assert.equal(restored.getTraces()[0].durationMs, 1000);
+    await journal.append({ type: 'execution.failed', executionId: 'e2' });
+    assert.equal((await restored.syncFromJournal(journal)).applied, 1);
+    const metrics = new Map(restored.getMetrics().metrics.map((item) => [item.name, item.value]));
+    assert.equal(metrics.get('executions.started'), 1);
+    assert.equal(metrics.get('executions.completed'), 1);
+    assert.equal(metrics.get('executions.failed'), 1);
+    assert.equal((await new ObservabilityEngine().syncFromJournal(journal)).applied, 3);
+    await journal.compactThrough(1, first.hash);
+    await assert.rejects(new ObservabilityEngine().syncFromJournal(journal), { code: 'EVENT_JOURNAL_GAP' });
+    assert.equal((await restored.syncFromJournal(journal)).applied, 0);
+    const live = new ObservabilityEngine({ eventTransport: new RuntimeEventTransport() });
+    await assert.rejects(live.syncFromJournal(journal), /without a live event source/);
+    live.close();
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

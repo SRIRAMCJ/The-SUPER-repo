@@ -2,6 +2,9 @@ const TERMINAL_SUFFIXES = new Set(['completed', 'failed', 'cancelled', 'rolled_b
 const START_SUFFIXES = new Set(['started']);
 
 export class ObservabilityEngine {
+  #journalCursor = { sequence: 0, hash: '0'.repeat(64) };
+  #journalVerified = false;
+
   constructor({ eventBus = null, eventTransport = null, clock = () => new Date(), maxEvents = 10000, maxTraces = 5000,
     maxMetricSeries = 4096, maxActiveExecutions = 10000 } = {}) {
     if (eventBus && typeof eventBus.on !== 'function') throw new TypeError('ObservabilityEngine requires a compatible event bus');
@@ -51,6 +54,29 @@ export class ObservabilityEngine {
     if (normalized.type === 'execution.progress') this.#increment('executions.progress_events');
     if (normalized.type === 'execution.started') this.#increment('executions.started');
     return normalized;
+  }
+
+  // Explicit rebuild/sync path. Do not combine with a live event source: that
+  // would apply an event twice without a shared sequence cursor.
+  async syncFromJournal(journal) {
+    if (this.unsubscribe) throw new Error('Journal sync requires an engine without a live event source');
+    if (!journal || typeof journal.replay !== 'function' || typeof journal.readFrom !== 'function') throw new TypeError('journal must support verified replay and incremental reads');
+    if (!this.#journalVerified) {
+      await journal.replay({ afterSequence: 0, limit: 1 });
+      this.#journalVerified = true;
+    }
+    let applied = 0, head;
+    do {
+      const batch = await journal.readFrom({ afterSequence: this.#journalCursor.sequence, afterHash: this.#journalCursor.hash, limit: 1000 });
+      head ??= batch.head.sequence;
+      for (const item of batch.events) {
+        if (item.sequence > head) break;
+        this.observe({ ...item.event, id: item.event.id ?? `journal_${item.sequence}` });
+        this.#journalCursor = { sequence: item.sequence, hash: item.hash };
+        applied++;
+      }
+    } while (this.#journalCursor.sequence < head);
+    return { applied, sequence: this.#journalCursor.sequence, head };
   }
 
   getMetrics() {

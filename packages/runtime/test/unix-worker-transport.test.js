@@ -74,7 +74,7 @@ test('worker denies policy before execution and records an allowed run durably',
   const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }), auditJournal, idempotencyStore,
     authorize: ({ input }) => ({ allowed: input.allowed === true }),
-    handlers: { task: () => { calls++; return 'done'; } } });
+    handlers: { task: (input) => { calls++; return input.large ? 'x'.repeat(70_000) : 'done'; } } });
   try {
     await server.start();
     const client = new UnixWorkerClient({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }) });
@@ -85,6 +85,9 @@ test('worker denies policy before execution and records an allowed run durably',
     await assert.rejects(client.execute({ capabilityId: 'task', input: { allowed: true, changed: true }, requestId: 'replayable' }), { code: 'REMOTE_REQUEST_CONFLICT' });
     assert.equal(await client.execute({ capabilityId: 'task', input: { allowed: true }, requestId: 'replayable' }), 'done');
     assert.equal(calls, 2);
-    assert.deepEqual((await auditJournal.replay()).events.map(({ event }) => event.type), ['remote.worker.started', 'remote.worker.succeeded', 'remote.worker.started', 'remote.worker.succeeded']);
+    await assert.rejects(client.execute({ capabilityId: 'task', input: { allowed: true, large: true }, requestId: 'large' }), { code: 'REMOTE_RESULT_TOO_LARGE' });
+    await assert.rejects(client.execute({ capabilityId: 'task', input: { allowed: true, large: true }, requestId: 'large' }), { code: 'REMOTE_RESULT_TOO_LARGE' });
+    assert.equal(calls, 3);
+    assert.deepEqual((await auditJournal.replay()).events.map(({ event }) => event.type), ['remote.worker.started', 'remote.worker.succeeded', 'remote.worker.started', 'remote.worker.succeeded', 'remote.worker.started', 'remote.worker.failed']);
   } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { RemoteWorkerAuthenticator, FileRemoteNonceStore, UnixWorkerServer, UnixWorkerClient, FileFailoverStore, FileEventJournal } from '../src/index.js';
+import { RemoteWorkerAuthenticator, FileRemoteNonceStore, UnixWorkerServer, UnixWorkerClient, FileFailoverStore, FileEventJournal, DurableIdempotencyStore } from '../src/index.js';
 
 const key = Buffer.alloc(32, 13);
-const controls = (directory) => ({ authorize: async () => ({ allowed: true }), auditJournal: new FileEventJournal(path.join(directory, 'audit')) });
+const controls = async (directory) => ({ authorize: async () => ({ allowed: true }), auditJournal: new FileEventJournal(path.join(directory, 'audit')),
+  idempotencyStore: await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl') }).init() });
 
 test('Unix worker executes a registered capability with authenticated identity', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'super-worker-'));
   const socketPath = path.join(directory, 'worker.sock');
-  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
+  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...await controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }),
     handlers: { 'math.double': (input, context) => ({ value: input.value * 2, nodeId: context.nodeId }) } });
   try {
@@ -31,7 +32,7 @@ test('worker rejects an invalid key before calling a capability', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'super-worker-'));
   const socketPath = path.join(directory, 'worker.sock');
   let calls = 0;
-  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
+  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...await controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }),
     handlers: { task: () => { calls++; } } });
   try {
@@ -47,7 +48,7 @@ test('configured file effect rejects a replaced worker lease at commit', async (
   const socketPath = path.join(directory, 'worker.sock');
   const destination = path.join(directory, 'effect.json');
   const effectStore = new FileFailoverStore(path.join(directory, 'leases.json'));
-  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
+  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', ...await controls(directory), authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }), effectStore,
     effects: { persist: destination }, handlers: { persist: (input, context) => context.writeEffect(input) } });
   try {
@@ -68,9 +69,10 @@ test('worker denies policy before execution and records an allowed run durably',
   const directory = await mkdtemp(path.join(tmpdir(), 'super-worker-policy-'));
   const socketPath = path.join(directory, 'worker.sock');
   const auditJournal = new FileEventJournal(path.join(directory, 'audit'));
+  const idempotencyStore = await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl') }).init();
   let calls = 0;
   const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
-    nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }), auditJournal,
+    nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }), auditJournal, idempotencyStore,
     authorize: ({ input }) => ({ allowed: input.allowed === true }),
     handlers: { task: () => { calls++; return 'done'; } } });
   try {
@@ -79,6 +81,10 @@ test('worker denies policy before execution and records an allowed run durably',
     await assert.rejects(client.execute({ capabilityId: 'task', input: { allowed: false } }), { code: 'REMOTE_POLICY_DENIED' });
     assert.equal(calls, 0);
     assert.equal(await client.execute({ capabilityId: 'task', input: { allowed: true } }), 'done');
-    assert.deepEqual((await auditJournal.replay()).events.map(({ event }) => event.type), ['remote.worker.started', 'remote.worker.succeeded']);
+    assert.equal(await client.execute({ capabilityId: 'task', input: { allowed: true }, requestId: 'replayable' }), 'done');
+    await assert.rejects(client.execute({ capabilityId: 'task', input: { allowed: true, changed: true }, requestId: 'replayable' }), { code: 'REMOTE_REQUEST_CONFLICT' });
+    assert.equal(await client.execute({ capabilityId: 'task', input: { allowed: true }, requestId: 'replayable' }), 'done');
+    assert.equal(calls, 2);
+    assert.deepEqual((await auditJournal.replay()).events.map(({ event }) => event.type), ['remote.worker.started', 'remote.worker.succeeded', 'remote.worker.started', 'remote.worker.succeeded']);
   } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
 });

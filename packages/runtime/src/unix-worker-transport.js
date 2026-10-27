@@ -2,6 +2,7 @@ import { createServer, createConnection } from 'node:net';
 import { chmod, lstat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const LIMIT = 65_536;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
@@ -11,19 +12,20 @@ const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 export class UnixWorkerServer {
   #server;
   #sockets = new Set();
-  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, authorize, auditJournal, effectStore = null, effects = {}, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
+  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, authorize, auditJournal, idempotencyStore, effectStore = null, effects = {}, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
     if (process.platform !== 'linux' || typeof socketPath !== 'string' || !socketPath.startsWith('/') ||
         !ID.test(nodeId) || typeof authenticator?.verifyWithStore !== 'function' || !nonceStore ||
         !handlers || typeof handlers !== 'object' || Array.isArray(handlers) ||
         Object.values(handlers).some((handler) => typeof handler !== 'function') ||
         typeof authorize !== 'function' || typeof auditJournal?.append !== 'function' ||
+        typeof idempotencyStore?.claim !== 'function' || typeof idempotencyStore?.completeClaim !== 'function' ||
         !effects || typeof effects !== 'object' || Array.isArray(effects) ||
         Object.entries(effects).some(([id, destination]) => !Object.hasOwn(handlers, id) || typeof destination !== 'string' || !destination.startsWith('/')) ||
         (Object.keys(effects).length > 0 && typeof effectStore?.writeFencedJson !== 'function') ||
         !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 ||
         !Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > LIMIT) throw new TypeError('Invalid Unix worker configuration');
     Object.assign(this, { socketPath, nodeId, authenticator, nonceStore, handlers: Object.freeze({ ...handlers }),
-      authorize, auditJournal, effectStore, effects: Object.freeze({ ...effects }), maxConcurrent, maxBytes });
+      authorize, auditJournal, idempotencyStore, effectStore, effects: Object.freeze({ ...effects }), maxConcurrent, maxBytes });
   }
 
   async start() {
@@ -86,16 +88,29 @@ export class UnixWorkerServer {
       const destination = Object.hasOwn(this.effects, capabilityId) ? this.effects[capabilityId] : null;
       if (destination && (!fence || !ID.test(fence.key) || !Number.isSafeInteger(fence.epoch) ||
           fence.epoch < 1 || !ID.test(fence.token))) throw fault('REMOTE_FENCE_REQUIRED');
+      const key = JSON.stringify([this.nodeId, body.requestId]);
+      const fingerprint = createHash('sha256').update(JSON.stringify(body.payload)).digest('hex');
+      const claim = await this.idempotencyStore.claim(key, fingerprint);
+      if (claim.state === 'replay') {
+        const response = claim.record.response;
+        this.#reply(socket, { requestId: body.requestId, ...response });
+        return;
+      }
+      if (claim.state !== 'claimed') throw fault({ conflict: 'REMOTE_REQUEST_CONFLICT', in_progress: 'REMOTE_IN_PROGRESS', recovery_required: 'REMOTE_RECOVERY_REQUIRED' }[claim.state] ?? 'REMOTE_CLAIM_INVALID');
       await this.auditJournal.append({ type: 'remote.worker.started', requestId: body.requestId, nodeId: this.nodeId, capabilityId });
       const context = { requestId: body.requestId, nodeId: body.nodeId };
       if (destination) context.writeEffect = (value) => this.effectStore.writeFencedJson(fence.key, fence, destination, value);
       let result;
       try { result = await this.handlers[capabilityId](structuredClone(input), context); }
       catch (error) {
-        await this.auditJournal.append({ type: 'remote.worker.failed', requestId: body.requestId, nodeId: this.nodeId, capabilityId, code: error?.code ?? 'REMOTE_WORKER_FAILED' });
-        throw error;
+        const code = error?.code ?? 'REMOTE_WORKER_FAILED';
+        await this.auditJournal.append({ type: 'remote.worker.failed', requestId: body.requestId, nodeId: this.nodeId, capabilityId, code });
+        if (!await this.idempotencyStore.completeClaim(key, fingerprint, claim.record.claimToken, { error: { code } })) throw fault('REMOTE_RECOVERY_REQUIRED');
+        this.#reply(socket, { requestId: body.requestId, error: { code } });
+        return;
       }
       await this.auditJournal.append({ type: 'remote.worker.succeeded', requestId: body.requestId, nodeId: this.nodeId, capabilityId });
+      if (!await this.idempotencyStore.completeClaim(key, fingerprint, claim.record.claimToken, { result })) throw fault('REMOTE_RECOVERY_REQUIRED');
       this.#reply(socket, { requestId: body.requestId, result });
     } catch (error) {
       // A failed terminal audit can follow a completed effect. The caller must

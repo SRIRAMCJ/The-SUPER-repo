@@ -11,14 +11,18 @@ const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 export class UnixWorkerServer {
   #server;
   #sockets = new Set();
-  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
+  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, effectStore = null, effects = {}, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
     if (process.platform !== 'linux' || typeof socketPath !== 'string' || !socketPath.startsWith('/') ||
         !ID.test(nodeId) || typeof authenticator?.verifyWithStore !== 'function' || !nonceStore ||
         !handlers || typeof handlers !== 'object' || Array.isArray(handlers) ||
         Object.values(handlers).some((handler) => typeof handler !== 'function') ||
+        !effects || typeof effects !== 'object' || Array.isArray(effects) ||
+        Object.entries(effects).some(([id, destination]) => !Object.hasOwn(handlers, id) || typeof destination !== 'string' || !destination.startsWith('/')) ||
+        (Object.keys(effects).length > 0 && typeof effectStore?.writeFencedJson !== 'function') ||
         !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 ||
         !Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > LIMIT) throw new TypeError('Invalid Unix worker configuration');
-    Object.assign(this, { socketPath, nodeId, authenticator, nonceStore, handlers: Object.freeze({ ...handlers }), maxConcurrent, maxBytes });
+    Object.assign(this, { socketPath, nodeId, authenticator, nonceStore, handlers: Object.freeze({ ...handlers }),
+      effectStore, effects: Object.freeze({ ...effects }), maxConcurrent, maxBytes });
   }
 
   async start() {
@@ -73,10 +77,15 @@ export class UnixWorkerServer {
     try {
       const body = await this.authenticator.verifyWithStore(envelope, this.nonceStore);
       if (body.nodeId !== this.nodeId) throw fault('REMOTE_NODE_MISMATCH');
-      const { capabilityId, input } = body.payload;
+      const { capabilityId, input, fence } = body.payload;
       if (typeof capabilityId !== 'string' || !Object.hasOwn(this.handlers, capabilityId) ||
           !input || typeof input !== 'object' || Array.isArray(input)) throw fault('REMOTE_CAPABILITY_DENIED');
-      const result = await this.handlers[capabilityId](structuredClone(input), { requestId: body.requestId, nodeId: body.nodeId });
+      const destination = Object.hasOwn(this.effects, capabilityId) ? this.effects[capabilityId] : null;
+      if (destination && (!fence || !ID.test(fence.key) || !Number.isSafeInteger(fence.epoch) ||
+          fence.epoch < 1 || !ID.test(fence.token))) throw fault('REMOTE_FENCE_REQUIRED');
+      const context = { requestId: body.requestId, nodeId: body.nodeId };
+      if (destination) context.writeEffect = (value) => this.effectStore.writeFencedJson(fence.key, fence, destination, value);
+      const result = await this.handlers[capabilityId](structuredClone(input), context);
       this.#reply(socket, { requestId: body.requestId, result });
     } catch (error) { this.#reply(socket, { error: { code: error?.code ?? 'REMOTE_WORKER_FAILED' } }); }
   }
@@ -99,9 +108,9 @@ export class UnixWorkerClient {
     Object.assign(this, { socketPath, nodeId, authenticator, timeoutMs, maxBytes });
   }
 
-  async execute({ requestId = randomUUID(), capabilityId, input = {} } = {}) {
+  async execute({ requestId = randomUUID(), capabilityId, input = {}, fence } = {}) {
     if (!ID.test(capabilityId)) throw new TypeError('Invalid capability ID');
-    const envelope = this.authenticator.sign({ requestId, nodeId: this.nodeId, payload: { capabilityId, input } });
+    const envelope = this.authenticator.sign({ requestId, nodeId: this.nodeId, payload: { capabilityId, input, ...(fence === undefined ? {} : { fence }) } });
     const frame = Buffer.from(JSON.stringify(envelope) + '\n');
     if (frame.length > this.maxBytes) throw fault('REMOTE_FRAME_TOO_LARGE');
     return new Promise((resolve, reject) => {

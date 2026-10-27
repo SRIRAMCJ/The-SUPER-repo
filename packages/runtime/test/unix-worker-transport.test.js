@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { RemoteWorkerAuthenticator, FileRemoteNonceStore, UnixWorkerServer, UnixWorkerClient } from '../src/index.js';
+import { RemoteWorkerAuthenticator, FileRemoteNonceStore, UnixWorkerServer, UnixWorkerClient, FileFailoverStore } from '../src/index.js';
 
 const key = Buffer.alloc(32, 13);
 
@@ -38,5 +38,27 @@ test('worker rejects an invalid key before calling a capability', async () => {
     const client = new UnixWorkerClient({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key: Buffer.alloc(32, 14) }) });
     await assert.rejects(client.execute({ capabilityId: 'task' }), { code: 'REMOTE_AUTH_INVALID' });
     assert.equal(calls, 0);
+  } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('configured file effect rejects a replaced worker lease at commit', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'super-worker-effect-'));
+  const socketPath = path.join(directory, 'worker.sock');
+  const destination = path.join(directory, 'effect.json');
+  const effectStore = new FileFailoverStore(path.join(directory, 'leases.json'));
+  const server = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
+    nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }), effectStore,
+    effects: { persist: destination }, handlers: { persist: (input, context) => context.writeEffect(input) } });
+  try {
+    await server.start();
+    const client = new UnixWorkerClient({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }) });
+    const old = await effectStore.claim('execution-1', 'node-1');
+    await assert.rejects(client.execute({ capabilityId: 'persist', input: { value: 1 } }), { code: 'REMOTE_FENCE_REQUIRED' });
+    await effectStore.release('execution-1', old);
+    const current = await effectStore.claim('execution-1', 'node-1');
+    await assert.rejects(client.execute({ capabilityId: 'persist', input: { value: 2 }, fence: { key: 'execution-1', epoch: old.epoch, token: old.token } }), { code: 'FAILOVER_FENCE_REJECTED' });
+    await assert.rejects(readFile(destination, 'utf8'), { code: 'ENOENT' });
+    await client.execute({ capabilityId: 'persist', input: { value: 3 }, fence: { key: 'execution-1', epoch: current.epoch, token: current.token } });
+    assert.deepEqual(JSON.parse(await readFile(destination, 'utf8')), { value: 3 });
   } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
 });

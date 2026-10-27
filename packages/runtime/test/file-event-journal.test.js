@@ -62,3 +62,23 @@ test('missing records, altered payload, orphan append and missing head fail clos
   await writeFile(path.join(directory, 'head.json'), 'null');
   await assert.rejects(new FileEventJournal(directory).append({ type: 'reset' }), { code: 'EVENT_JOURNAL_CORRUPT' });
 }));
+
+test('explicit compaction frees bounded capacity and exposes gaps to old cursors', () => temporary(async (directory) => {
+  const journal = new FileEventJournal(directory, { maxRecords: 3 });
+  const first = await journal.append({ type: 'one' });
+  const second = await journal.append({ type: 'two' });
+  await journal.append({ type: 'three' });
+  await assert.rejects(journal.append({ type: 'full' }), { code: 'EVENT_JOURNAL_CAPACITY' });
+  await assert.rejects(journal.compactThrough(2, first.hash), { code: 'EVENT_JOURNAL_CURSOR_INVALID' });
+  await journal.compactThrough(2, second.hash);
+  await assert.rejects(journal.replay(), { code: 'EVENT_JOURNAL_GAP' });
+  await assert.rejects(journal.readFrom({ afterSequence: 1, afterHash: first.hash }), { code: 'EVENT_JOURNAL_GAP' });
+  assert.deepEqual((await journal.replay({ afterSequence: 2 })).events, [{ sequence: 3, event: { type: 'three' } }]);
+  assert.equal((await journal.readFrom({ afterSequence: 2, afterHash: second.hash })).events.length, 1);
+  assert.equal((await journal.append({ type: 'four' })).sequence, 4);
+  await journal.compactThrough(2, second.hash);
+  await assert.rejects(journal.readFrom({ afterSequence: 2, afterHash: first.hash }), { code: 'EVENT_JOURNAL_CURSOR_INVALID' });
+  await assert.rejects(readFile(path.join(directory, '000000000001.json')), { code: 'ENOENT' });
+  const restarted = new FileEventJournal(directory, { maxRecords: 3 });
+  assert.equal((await restarted.replay({ afterSequence: 2 })).events.length, 2);
+}));

@@ -57,6 +57,7 @@ export { SecurityCapabilityGate, SECURITY_CAPABILITY_SCHEMA_VERSION, SECURITY_TR
 export { DistributedCapabilityGate, DISTRIBUTED_CAPABILITY_SCHEMA_VERSION, DISTRIBUTED_NODE_STATES, DISTRIBUTED_TERMINAL_STATES } from './distributed-capability.js';
 export { RemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION, REMOTE_EXECUTION_TERMINAL_STATES } from './remote-transport.js';
 export { RemoteWorkerAuthenticator } from './remote-worker-auth.js';
+export { FileRemoteNonceStore } from './file-remote-nonce-store.js';
 export { AgentRuntime } from './agent.js';
 export { ModelProviderRegistry, ModelRuntime } from './models.js';
 export { ModelRouter } from './model-router.js';

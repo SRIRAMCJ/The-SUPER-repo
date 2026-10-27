@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, unlink } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
-import { FileIncidentProvider, FileFailoverStore, RuntimeDeploymentHost, RuntimeFailoverKernel,
+import { FileIncidentProvider, FileIncidentController, FileFailoverStore, RuntimeDeploymentHost, RuntimeFailoverKernel,
   RuntimeSupervisorKernel, RuntimeLifecycleManager, RuntimeShutdownCoordinator, RuntimeShutdownAdmission } from '../src/index.js';
 import { writeAtomicJson } from '../src/atomic-json.js';
 
@@ -49,6 +50,32 @@ test('incident provider rejects missing, invalid, and oversized state', async ()
       await writeFile(file, value);
       await assert.rejects(provider.current(), { code: 'INCIDENT_FILE_INVALID' });
     }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('incident controller serializes opens across processes and fences stale resolution', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'super-incident-controller-'));
+  try {
+    const file = path.join(directory, 'incident.json');
+    const moduleUrl = new URL('../src/file-incident-provider.js', import.meta.url).href;
+    const script = `import { FileIncidentController } from ${JSON.stringify(moduleUrl)}; console.log(await new FileIncidentController(process.argv[1]).open());`;
+    const ids = await Promise.all(Array.from({ length: 5 }, () => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script, file], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk; });
+      child.on('error', reject);
+      child.on('close', (code) => code === 0 ? resolve(output.trim()) : reject(new Error(`incident child exited ${code}`)));
+    })));
+    assert.equal(new Set(ids).size, 1);
+    const controller = new FileIncidentController(file);
+    assert.equal(await new FileIncidentProvider(file).current(), ids[0]);
+    await controller.resolve(ids[0]);
+    assert.equal(await new FileIncidentProvider(file).current(), null);
+    const next = await new FileIncidentController(file).open();
+    assert.notEqual(next, ids[0]);
+    await assert.rejects(controller.resolve(ids[0]), { code: 'INCIDENT_STALE' });
+    await unlink(file);
+    await assert.rejects(new FileIncidentController(file).open(), { code: 'INCIDENT_FILE_MISSING' });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -165,6 +165,7 @@ test('observed journal disappearance fails closed', async () => {
     await store.claim('key', 'fp');
     await rm(filePath);
     await assert.rejects(store.claim('other', 'fp'), { code: 'ENOENT' });
+    await assert.rejects(new DurableIdempotencyStore({ filePath }).init(), { code: 'ENOENT' });
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

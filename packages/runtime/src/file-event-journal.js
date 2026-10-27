@@ -58,6 +58,29 @@ export class FileEventJournal {
     });
   }
 
+  // Incremental read for a cursor that was verified on startup. The cursor
+  // hash binds the next batch to the last successfully delivered record.
+  async readFrom({ afterSequence = 0, afterHash = ZERO, limit = 100 } = {}) {
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !DIGEST.test(afterHash) ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new TypeError('Invalid journal cursor or limit');
+    return this.#locked(async () => {
+      const head = await this.#head(false);
+      if (afterSequence > head.sequence || (afterSequence === 0 && afterHash !== ZERO)) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
+      if (afterSequence) await this.#verifyRecord(afterSequence, afterHash);
+      let previousHash = afterHash;
+      const events = [];
+      for (let sequence = afterSequence + 1; sequence <= Math.min(head.sequence, afterSequence + limit); sequence++) {
+        const record = await this.#verifyRecord(sequence);
+        if (record.previousHash !== previousHash) throw fault('EVENT_JOURNAL_CORRUPT');
+        previousHash = record.hash;
+        events.push({ sequence, hash: record.hash, event: record.event });
+      }
+      if (head.sequence === afterSequence + events.length && previousHash !== head.hash) throw fault('EVENT_JOURNAL_CORRUPT');
+      if (await exists(this.#recordPath(head.sequence + 1))) throw fault('EVENT_JOURNAL_CORRUPT');
+      return { events, head: { ...head } };
+    });
+  }
+
   #headPath() { return path.join(this.directory, 'head.json'); }
   #recordPath(sequence) { return path.join(this.directory, `${String(sequence).padStart(12, '0')}.json`); }
 

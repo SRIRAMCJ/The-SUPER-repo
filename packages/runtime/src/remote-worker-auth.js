@@ -33,6 +33,19 @@ export class RemoteWorkerAuthenticator {
   }
 
   verify(envelope) {
+    const body = this.#validate(envelope);
+    this.#remember(body);
+    return structuredClone(body);
+  }
+
+  async verifyWithStore(envelope, store) {
+    if (!store || typeof store.consume !== 'function') throw new TypeError('A durable nonce store is required');
+    const body = this.#validate(envelope);
+    await store.consume(body.nonce, body.issuedAt + this.maxSkewMs);
+    return structuredClone(body);
+  }
+
+  #validate(envelope) {
     const body = envelope?.body;
     if (!body || typeof body !== 'object' || Array.isArray(body) || body.schemaVersion !== VERSION ||
         body.type !== 'remote-worker-request' || !ID.test(body.requestId) || !ID.test(body.nodeId) ||
@@ -44,15 +57,18 @@ export class RemoteWorkerAuthenticator {
     if (!timingSafeEqual(expected, Buffer.from(envelope.mac, 'hex'))) throw fault('REMOTE_AUTH_INVALID');
     const now = this.#now();
     if (Math.abs(now - body.issuedAt) > this.maxSkewMs) throw fault('REMOTE_AUTH_EXPIRED');
-    while (this.#seen.size) {
-      const [nonce, expires] = this.#seen.entries().next().value;
-      if (expires >= now) break;
-      this.#seen.delete(nonce);
+    return body;
+  }
+
+  #remember(body) {
+    const now = this.#now();
+    if ((this.#seen.get(body.nonce) ?? -1) >= now) throw fault('REMOTE_AUTH_REPLAY');
+    this.#seen.delete(body.nonce);
+    if (this.#seen.size >= this.maxNonces) {
+      for (const [nonce, expires] of this.#seen) if (expires < now) this.#seen.delete(nonce);
     }
-    if (this.#seen.has(body.nonce)) throw fault('REMOTE_AUTH_REPLAY');
     if (this.#seen.size >= this.maxNonces) throw fault('REMOTE_AUTH_CAPACITY');
-    this.#seen.set(body.nonce, now + this.maxSkewMs);
-    return structuredClone(body);
+    this.#seen.set(body.nonce, body.issuedAt + this.maxSkewMs);
   }
 
   #mac(serialized) { return createHmac('sha256', this.#key).update(serialized).digest('hex'); }

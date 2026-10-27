@@ -7,9 +7,10 @@ export class RuntimeEventTransport {
   #closed = false;
   #waiters = [];
 
-  constructor({ maxPending = 1024, maxSubscribers = 64 } = {}) {
+  constructor({ maxPending = 1024, maxSubscribers = 64, journal } = {}) {
     if (!Number.isSafeInteger(maxPending) || maxPending < 1 || !Number.isSafeInteger(maxSubscribers) || maxSubscribers < 1) throw new TypeError('Transport limits must be positive integers');
-    Object.assign(this, { maxPending, maxSubscribers });
+    if (journal !== undefined && typeof journal.append !== 'function') throw new TypeError('journal must expose append()');
+    Object.assign(this, { maxPending, maxSubscribers, journal });
   }
 
   subscribe(listener) {
@@ -35,6 +36,10 @@ export class RuntimeEventTransport {
     this.#running = true;
     while (this.#queue.length) {
       const item = this.#queue.shift();
+      if (this.journal) {
+        try { await this.journal.append(item.event); }
+        catch (error) { item.reject(error); continue; }
+      }
       const outcomes = await Promise.allSettled([...this.#subscribers].map((listener) => Promise.resolve().then(() => listener(structuredClone(item.event)))));
       const errors = outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => outcome.reason);
       if (errors.length) item.reject(new AggregateError(errors, 'Event delivery failed'));

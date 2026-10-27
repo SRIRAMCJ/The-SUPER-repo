@@ -101,7 +101,14 @@ export class UnixWorkerServer {
       const context = { requestId: body.requestId, nodeId: body.nodeId };
       if (destination) context.writeEffect = (value) => this.effectStore.writeFencedJson(fence.key, fence, destination, value);
       let result;
-      try { result = await this.handlers[capabilityId](structuredClone(input), context); }
+      try {
+        result = await this.handlers[capabilityId](structuredClone(input), context);
+        let serialized;
+        try { serialized = JSON.stringify({ requestId: body.requestId, result }); }
+        catch { throw fault('REMOTE_RESULT_INVALID'); }
+        if (Buffer.byteLength(serialized) + 1 > this.maxBytes) throw fault('REMOTE_RESULT_TOO_LARGE');
+        result = JSON.parse(serialized).result;
+      }
       catch (error) {
         const code = error?.code ?? 'REMOTE_WORKER_FAILED';
         await this.auditJournal.append({ type: 'remote.worker.failed', requestId: body.requestId, nodeId: this.nodeId, capabilityId, code });

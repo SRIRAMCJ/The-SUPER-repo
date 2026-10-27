@@ -103,3 +103,9 @@ test('explicit orphan recovery promotes one valid interrupted record and rejects
   await assert.rejects(journal.recoverOrphan(), { code: 'EVENT_JOURNAL_CORRUPT' });
   assert.equal(JSON.parse(await readFile(path.join(directory, 'head.json'), 'utf8')).sequence, 2);
 }));
+
+test('record serialization stays within its replay byte budget for dense JSON arrays', () => temporary(async (directory) => {
+  const journal = new FileEventJournal(directory, { maxEventBytes: 1024 });
+  await journal.append({ type: 'dense', values: Array(300).fill(0) });
+  assert.equal((await new FileEventJournal(directory, { maxEventBytes: 1024 }).replay()).events[0].event.values.length, 300);
+}));

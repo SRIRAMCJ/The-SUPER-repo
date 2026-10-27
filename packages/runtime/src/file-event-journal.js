@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, open } from 'node:fs/promises';
+import { mkdir, open, readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { writeAtomicJson } from './atomic-json.js';
 import { withKernelFileLock } from './kernel-file-lock.js';
@@ -30,8 +30,9 @@ export class FileEventJournal {
     const copy = JSON.parse(payload);
     return this.#locked(async () => {
       const head = await this.#head(true);
-      if (head.sequence >= this.maxRecords) throw fault('EVENT_JOURNAL_CAPACITY');
-      if (head.sequence) await this.#verifyRecord(head.sequence, head.hash);
+      const base = await this.#base(head);
+      if (head.sequence - base.sequence >= this.maxRecords) throw fault('EVENT_JOURNAL_CAPACITY');
+      if (head.sequence > base.sequence) await this.#verifyRecord(head.sequence, head.hash);
       if (await exists(this.#recordPath(head.sequence + 1))) throw fault('EVENT_JOURNAL_CORRUPT');
       const sequence = head.sequence + 1;
       const hash = digest(head.hash, sequence, payload);
@@ -45,9 +46,11 @@ export class FileEventJournal {
     if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new TypeError('Invalid replay cursor or limit');
     return this.#locked(async () => {
       const head = await this.#head(false);
-      let previousHash = ZERO;
+      const base = await this.#base(head);
+      if (afterSequence < base.sequence) throw fault('EVENT_JOURNAL_GAP');
+      let previousHash = base.hash;
       const events = [];
-      for (let sequence = 1; sequence <= head.sequence; sequence++) {
+      for (let sequence = base.sequence + 1; sequence <= head.sequence; sequence++) {
         const record = await this.#verifyRecord(sequence);
         if (record.previousHash !== previousHash) throw fault('EVENT_JOURNAL_CORRUPT');
         previousHash = record.hash;
@@ -65,8 +68,11 @@ export class FileEventJournal {
         !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new TypeError('Invalid journal cursor or limit');
     return this.#locked(async () => {
       const head = await this.#head(false);
+      const base = await this.#base(head);
+      if (afterSequence < base.sequence) throw fault('EVENT_JOURNAL_GAP');
       if (afterSequence > head.sequence || (afterSequence === 0 && afterHash !== ZERO)) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
-      if (afterSequence) await this.#verifyRecord(afterSequence, afterHash);
+      if (afterSequence === base.sequence && afterHash !== base.hash) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
+      if (afterSequence > base.sequence) await this.#verifyRecord(afterSequence, afterHash);
       let previousHash = afterHash;
       const events = [];
       for (let sequence = afterSequence + 1; sequence <= Math.min(head.sequence, afterSequence + limit); sequence++) {
@@ -81,7 +87,37 @@ export class FileEventJournal {
     });
   }
 
+  // Explicit retention boundary. Callers must verify every relevant consumer
+  // checkpoint has advanced before pruning; lagging cursors fail with GAP.
+  async compactThrough(sequence, expectedHash) {
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || !DIGEST.test(expectedHash)) throw new TypeError('Valid sequence and expectedHash are required');
+    return this.#locked(async () => {
+      const head = await this.#head(false);
+      const base = await this.#base(head);
+      if (sequence < base.sequence || sequence > head.sequence) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
+      if (sequence > base.sequence) {
+        let previousHash = base.hash;
+        for (let index = base.sequence + 1; index <= head.sequence; index++) {
+          const record = await this.#verifyRecord(index);
+          if (record.previousHash !== previousHash) throw fault('EVENT_JOURNAL_CORRUPT');
+          previousHash = record.hash;
+          if (index === sequence && record.hash !== expectedHash) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
+        }
+        if (previousHash !== head.hash || await exists(this.#recordPath(head.sequence + 1))) throw fault('EVENT_JOURNAL_CORRUPT');
+        await writeAtomicJson(this.#basePath(), { sequence, hash: expectedHash });
+      } else if (expectedHash !== base.hash) throw fault('EVENT_JOURNAL_CURSOR_INVALID');
+      const names = await readdir(this.directory);
+      for (const name of names) {
+        if (!/^\d{12,}\.json$/.test(name)) continue;
+        const number = Number(name.slice(0, -5));
+        if (Number.isSafeInteger(number) && number <= sequence) await unlink(path.join(this.directory, name));
+      }
+      return { sequence, hash: expectedHash };
+    });
+  }
+
   #headPath() { return path.join(this.directory, 'head.json'); }
+  #basePath() { return path.join(this.directory, 'base.json'); }
   #recordPath(sequence) { return path.join(this.directory, `${String(sequence).padStart(12, '0')}.json`); }
 
   async #locked(work) {
@@ -102,9 +138,17 @@ export class FileEventJournal {
       head = { sequence: 0, hash: ZERO };
       await writeAtomicJson(this.#headPath(), head);
     } else if (!marker) throw fault('EVENT_JOURNAL_CORRUPT');
-    if (!Number.isSafeInteger(head.sequence) || head.sequence < 0 || head.sequence > this.maxRecords || !DIGEST.test(head.hash) ||
+    if (!Number.isSafeInteger(head.sequence) || head.sequence < 0 || !DIGEST.test(head.hash) ||
         (head.sequence === 0 && head.hash !== ZERO)) throw fault('EVENT_JOURNAL_CORRUPT');
     return head;
+  }
+
+  async #base(head) {
+    const base = await readJson(this.#basePath(), 256) ?? { sequence: 0, hash: ZERO };
+    if (!Number.isSafeInteger(base.sequence) || base.sequence < 0 || base.sequence > head.sequence || !DIGEST.test(base.hash) ||
+        (base.sequence === 0 && base.hash !== ZERO) || (base.sequence === head.sequence && base.hash !== head.hash) ||
+        head.sequence - base.sequence > this.maxRecords) throw fault('EVENT_JOURNAL_CORRUPT');
+    return base;
   }
 
   async #verifyRecord(sequence, expectedHash) {

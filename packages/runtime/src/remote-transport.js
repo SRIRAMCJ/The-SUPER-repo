@@ -93,6 +93,8 @@ function failure(code, message) { return Object.assign(new Error(message), { cod
 function normalizeError(error) { return { code: error?.code ?? 'REMOTE_EXECUTION_FAILED', message: error instanceof Error ? error.message : String(error), retryable: Boolean(error?.retryable) }; }
 function deepFreeze(value) { if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value; for (const child of Object.values(value)) deepFreeze(child); return Object.freeze(value); }
 function clone(value) { return value === undefined || value === null ? value : structuredClone(value); }
-function defaultId(prefix = 'remote') { return `${prefix}-${Date.now().toString(36)}`; }
+function defaultId(prefix = 'remote') { return `${prefix}-${randomUUID()}`; }
 
 export { SCHEMA_VERSION as REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION, TERMINAL_STATES as REMOTE_EXECUTION_TERMINAL_STATES };
+import { randomUUID } from 'node:crypto';
+

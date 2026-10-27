@@ -3,6 +3,7 @@ export { EventBus, createExecutionId } from './events.js';
 export { RuntimeEventTransport } from './event-transport.js';
 export { FileEventJournal } from './file-event-journal.js';
 export { FileEventConsumer } from './file-event-consumer.js';
+export { FileObservabilityCheckpoint } from './file-observability-checkpoint.js';
 export { ExecutionEngine } from './executor.js';
 export { ExecutionCancellationRegistry } from './cancellation.js';
 export { ExecutionPlanExecutor } from './plan-executor.js';

@@ -62,7 +62,7 @@ export class ObservabilityEngine {
     if (this.unsubscribe) throw new Error('Journal sync requires an engine without a live event source');
     if (!journal || typeof journal.replay !== 'function' || typeof journal.readFrom !== 'function') throw new TypeError('journal must support verified replay and incremental reads');
     if (!this.#journalVerified) {
-      await journal.replay({ afterSequence: 0, limit: 1 });
+      await journal.replay({ afterSequence: this.#journalCursor.sequence, limit: 1 });
       this.#journalVerified = true;
     }
     let applied = 0, head;
@@ -77,6 +77,38 @@ export class ObservabilityEngine {
       }
     } while (this.#journalCursor.sequence < head);
     return { applied, sequence: this.#journalCursor.sequence, head };
+  }
+
+  exportCheckpoint() {
+    if (!this.#journalVerified || this.unsubscribe) throw new Error('Checkpoint requires a verified journal projection');
+    return structuredClone({ schemaVersion: '0.1.0', type: 'observability-checkpoint', cursor: this.#journalCursor,
+      metrics: [...this.metrics], spans: [...this.spans], events: this.events, activeExecutions: [...this.activeExecutions] });
+  }
+
+  static restoreCheckpoint(checkpoint, options = {}) {
+    if (options.eventBus || options.eventTransport) throw new TypeError('Checkpoint restore requires no live event source');
+    if (!checkpoint || checkpoint.schemaVersion !== '0.1.0' || checkpoint.type !== 'observability-checkpoint' ||
+        !Number.isSafeInteger(checkpoint.cursor?.sequence) || checkpoint.cursor.sequence < 0 ||
+        !/^[0-9a-f]{64}$/.test(checkpoint.cursor.hash) ||
+        !Array.isArray(checkpoint.metrics) || !Array.isArray(checkpoint.spans) ||
+        !Array.isArray(checkpoint.events) || !Array.isArray(checkpoint.activeExecutions)) throw new TypeError('Invalid observability checkpoint');
+    const engine = new ObservabilityEngine(options);
+    if (engine.unsubscribe || checkpoint.metrics.length > engine.maxMetricSeries || checkpoint.spans.length > engine.maxTraces ||
+        checkpoint.events.length > engine.maxEvents || checkpoint.activeExecutions.length > engine.maxActiveExecutions ||
+        checkpoint.metrics.some(([name, value]) => typeof name !== 'string' || !Number.isFinite(value)) ||
+        checkpoint.spans.some(([name, span]) => typeof name !== 'string' || !span || typeof span !== 'object') ||
+        checkpoint.events.some((event) => !event || typeof event.type !== 'string') ||
+        checkpoint.activeExecutions.some((id) => typeof id !== 'string') ||
+        new Set(checkpoint.metrics.map(([name]) => name)).size !== checkpoint.metrics.length ||
+        new Set(checkpoint.spans.map(([name]) => name)).size !== checkpoint.spans.length ||
+        new Set(checkpoint.activeExecutions).size !== checkpoint.activeExecutions.length) throw new TypeError('Invalid observability checkpoint');
+    engine.metrics = new Map(structuredClone(checkpoint.metrics));
+    if (!engine.metrics.has('metrics.dropped_series') || !engine.metrics.has('active_executions.evicted')) throw new TypeError('Invalid observability checkpoint');
+    engine.spans = new Map(structuredClone(checkpoint.spans));
+    engine.events = structuredClone(checkpoint.events);
+    engine.activeExecutions = new Set(checkpoint.activeExecutions);
+    engine.#journalCursor = structuredClone(checkpoint.cursor);
+    return engine;
   }
 
   getMetrics() {

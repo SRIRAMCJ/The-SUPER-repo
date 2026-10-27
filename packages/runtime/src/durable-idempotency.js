@@ -111,14 +111,22 @@ export class DurableIdempotencyStore {
   snapshot() { this.#assertReady(); return { schemaVersion: SCHEMA_VERSION, type: 'durable-idempotency-store', retainedRecords: this.#records.size, ttlMs: this.ttlMs, maxRecords: this.maxRecords }; }
   async #putRecord(record) { await this.#append(journalEntry(record)); this.#records.set(record.key, clone(record)); }
   async #append(record) {
+    await this.#markInitialized();
     await appendFile(this.filePath, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600 });
     this.#observed = true;
     const handle = await open(this.filePath, 'r'); try { await handle.sync(); } finally { await handle.close(); }
   }
   async #reload() {
+    let initialized = false;
+    try {
+      const marker = JSON.parse(await readFile(`${this.filePath}.initialized`, 'utf8'));
+      if (marker?.schemaVersion !== SCHEMA_VERSION || marker.initialized !== true) throw new Error('Invalid idempotency initialization marker');
+      initialized = true;
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
     let text;
     try { text = await readFile(this.filePath, 'utf8'); this.#observed = true; }
-    catch (error) { if (error.code === 'ENOENT' && !this.#observed) text = ''; else throw error; }
+    catch (error) { if (error.code === 'ENOENT' && !this.#observed && !initialized) text = ''; else throw error; }
+    if (text && !initialized) await this.#markInitialized();
     const records = new Map();
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
@@ -145,6 +153,16 @@ export class DurableIdempotencyStore {
   #checkCapacity(key) { if (!this.#records.has(key) && this.#records.size >= this.maxRecords) throw Object.assign(new Error('Idempotency capacity exhausted'), { code: 'IDEMPOTENCY_CAPACITY' }); }
   #validateExpiry(value) { if (!Number.isFinite(value) || value <= this.clock()) throw new TypeError('expiresAt must be a future timestamp'); }
   #assertReady() { if (!this.ready) throw new Error('DurableIdempotencyStore.init() must be awaited before use'); }
+  async #markInitialized() {
+    const markerPath = `${this.filePath}.initialized`;
+    let handle;
+    try {
+      handle = await open(markerPath, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify({ schemaVersion: SCHEMA_VERSION, initialized: true }));
+      await handle.sync();
+    } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    finally { await handle?.close(); }
+  }
 }
 function journalEntry(record) { const { key, createdAt, expiresAt, ...value } = record; return { schemaVersion: SCHEMA_VERSION, op: 'put', key, value, createdAt, expiresAt }; }
 function normalizeKey(key) { if (typeof key !== 'string' || !key.trim() || key.length > 4096) throw new TypeError('key must be a non-empty string of at most 4096 characters'); return key; }

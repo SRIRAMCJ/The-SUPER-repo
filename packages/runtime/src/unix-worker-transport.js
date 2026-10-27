@@ -88,8 +88,8 @@ export class UnixWorkerServer {
       const destination = Object.hasOwn(this.effects, capabilityId) ? this.effects[capabilityId] : null;
       if (destination && (!fence || !ID.test(fence.key) || !Number.isSafeInteger(fence.epoch) ||
           fence.epoch < 1 || !ID.test(fence.token))) throw fault('REMOTE_FENCE_REQUIRED');
-      const key = JSON.stringify([this.nodeId, body.requestId]);
-      const fingerprint = createHash('sha256').update(JSON.stringify(body.payload)).digest('hex');
+      const key = body.requestId;
+      const fingerprint = createHash('sha256').update(JSON.stringify([this.nodeId, body.payload])).digest('hex');
       const claim = await this.idempotencyStore.claim(key, fingerprint);
       if (claim.state === 'replay') {
         const response = claim.record.response;

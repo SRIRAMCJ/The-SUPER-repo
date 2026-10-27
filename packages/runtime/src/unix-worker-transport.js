@@ -11,18 +11,19 @@ const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 export class UnixWorkerServer {
   #server;
   #sockets = new Set();
-  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, effectStore = null, effects = {}, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
+  constructor({ socketPath, nodeId, authenticator, nonceStore, handlers, authorize, auditJournal, effectStore = null, effects = {}, maxConcurrent = 32, maxBytes = LIMIT } = {}) {
     if (process.platform !== 'linux' || typeof socketPath !== 'string' || !socketPath.startsWith('/') ||
         !ID.test(nodeId) || typeof authenticator?.verifyWithStore !== 'function' || !nonceStore ||
         !handlers || typeof handlers !== 'object' || Array.isArray(handlers) ||
         Object.values(handlers).some((handler) => typeof handler !== 'function') ||
+        typeof authorize !== 'function' || typeof auditJournal?.append !== 'function' ||
         !effects || typeof effects !== 'object' || Array.isArray(effects) ||
         Object.entries(effects).some(([id, destination]) => !Object.hasOwn(handlers, id) || typeof destination !== 'string' || !destination.startsWith('/')) ||
         (Object.keys(effects).length > 0 && typeof effectStore?.writeFencedJson !== 'function') ||
         !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1 ||
         !Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > LIMIT) throw new TypeError('Invalid Unix worker configuration');
     Object.assign(this, { socketPath, nodeId, authenticator, nonceStore, handlers: Object.freeze({ ...handlers }),
-      effectStore, effects: Object.freeze({ ...effects }), maxConcurrent, maxBytes });
+      authorize, auditJournal, effectStore, effects: Object.freeze({ ...effects }), maxConcurrent, maxBytes });
   }
 
   async start() {
@@ -80,14 +81,27 @@ export class UnixWorkerServer {
       const { capabilityId, input, fence } = body.payload;
       if (typeof capabilityId !== 'string' || !Object.hasOwn(this.handlers, capabilityId) ||
           !input || typeof input !== 'object' || Array.isArray(input)) throw fault('REMOTE_CAPABILITY_DENIED');
+      const decision = await this.authorize({ capabilityId, nodeId: this.nodeId, requestId: body.requestId, input: structuredClone(input) });
+      if (decision?.allowed !== true) throw fault('REMOTE_POLICY_DENIED');
       const destination = Object.hasOwn(this.effects, capabilityId) ? this.effects[capabilityId] : null;
       if (destination && (!fence || !ID.test(fence.key) || !Number.isSafeInteger(fence.epoch) ||
           fence.epoch < 1 || !ID.test(fence.token))) throw fault('REMOTE_FENCE_REQUIRED');
+      await this.auditJournal.append({ type: 'remote.worker.started', requestId: body.requestId, nodeId: this.nodeId, capabilityId });
       const context = { requestId: body.requestId, nodeId: body.nodeId };
       if (destination) context.writeEffect = (value) => this.effectStore.writeFencedJson(fence.key, fence, destination, value);
-      const result = await this.handlers[capabilityId](structuredClone(input), context);
+      let result;
+      try { result = await this.handlers[capabilityId](structuredClone(input), context); }
+      catch (error) {
+        await this.auditJournal.append({ type: 'remote.worker.failed', requestId: body.requestId, nodeId: this.nodeId, capabilityId, code: error?.code ?? 'REMOTE_WORKER_FAILED' });
+        throw error;
+      }
+      await this.auditJournal.append({ type: 'remote.worker.succeeded', requestId: body.requestId, nodeId: this.nodeId, capabilityId });
       this.#reply(socket, { requestId: body.requestId, result });
-    } catch (error) { this.#reply(socket, { error: { code: error?.code ?? 'REMOTE_WORKER_FAILED' } }); }
+    } catch (error) {
+      // A failed terminal audit can follow a completed effect. The caller must
+      // reconcile that uncertain outcome instead of blindly retrying it.
+      this.#reply(socket, { error: { code: error?.code ?? 'REMOTE_WORKER_FAILED' } });
+    }
   }
 
   #reply(socket, value) {

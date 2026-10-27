@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EventBus, ObservabilityEngine } from '../src/index.js';
+import { EventBus, ObservabilityEngine, RuntimeEventTransport } from '../src/index.js';
 
 test('observability subscribes to the event bus and tracks execution lifecycle metrics', () => {
   const eventBus = new EventBus();
@@ -77,4 +77,27 @@ test('observability validates events and supports unsubscribe', () => {
   observability.close();
   eventBus.emit({ type: 'execution.started', executionId: 'exec-4' });
   assert.equal(observability.getEvents().length, 0);
+});
+
+test('observability consumes the asynchronous transport and releases subscription', async () => {
+  const eventTransport = new RuntimeEventTransport();
+  const observability = new ObservabilityEngine({ eventTransport });
+  await eventTransport.publish({ type: 'execution.started', executionId: 'one' });
+  assert.equal(observability.getEvents().length, 1);
+  observability.close();
+  await eventTransport.publish({ type: 'execution.completed', executionId: 'one' });
+  assert.equal(observability.getEvents().length, 1);
+  await eventTransport.close();
+});
+
+test('observability bounds metric series and active execution cardinality', () => {
+  const observability = new ObservabilityEngine({ maxMetricSeries: 8, maxActiveExecutions: 2 });
+  for (let i = 0; i < 20; i++) observability.observe({ type: `custom.${i}` });
+  for (let i = 0; i < 3; i++) observability.observe({ type: 'execution.started', executionId: `exec-${i}` });
+  const snapshot = observability.getMetrics();
+  const metrics = new Map(snapshot.metrics.map((item) => [item.name, item.value]));
+  assert.equal(snapshot.metrics.length, 8);
+  assert.ok(metrics.get('metrics.dropped_series') > 0);
+  assert.equal(metrics.get('active_executions.evicted'), 1);
+  assert.equal(snapshot.activeExecutions, 2);
 });

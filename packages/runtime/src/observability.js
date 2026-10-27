@@ -2,18 +2,27 @@ const TERMINAL_SUFFIXES = new Set(['completed', 'failed', 'cancelled', 'rolled_b
 const START_SUFFIXES = new Set(['started']);
 
 export class ObservabilityEngine {
-  constructor({ eventBus = null, clock = () => new Date(), maxEvents = 10000, maxTraces = 5000 } = {}) {
+  constructor({ eventBus = null, eventTransport = null, clock = () => new Date(), maxEvents = 10000, maxTraces = 5000,
+    maxMetricSeries = 4096, maxActiveExecutions = 10000 } = {}) {
     if (eventBus && typeof eventBus.on !== 'function') throw new TypeError('ObservabilityEngine requires a compatible event bus');
+    if (eventTransport && typeof eventTransport.subscribe !== 'function') throw new TypeError('ObservabilityEngine requires a compatible event transport');
+    if (eventBus && eventTransport) throw new TypeError('Choose one observability event source');
     if (!Number.isInteger(maxEvents) || maxEvents <= 0) throw new TypeError('ObservabilityEngine maxEvents must be a positive integer');
     if (!Number.isInteger(maxTraces) || maxTraces <= 0) throw new TypeError('ObservabilityEngine maxTraces must be a positive integer');
+    if (!Number.isSafeInteger(maxMetricSeries) || maxMetricSeries < 8 || !Number.isSafeInteger(maxActiveExecutions) || maxActiveExecutions < 1) throw new TypeError('Observability cardinality limits are invalid');
     this.clock = clock;
     this.maxEvents = maxEvents;
     this.maxTraces = maxTraces;
+    this.maxMetricSeries = maxMetricSeries;
+    this.maxActiveExecutions = maxActiveExecutions;
     this.events = [];
     this.spans = new Map();
     this.metrics = new Map();
     this.activeExecutions = new Set();
-    this.unsubscribe = eventBus ? eventBus.on('*', (event) => this.observe(event)) : null;
+    this.metrics.set('metrics.dropped_series', 0);
+    this.metrics.set('active_executions.evicted', 0);
+    this.unsubscribe = eventBus ? eventBus.on('*', (event) => this.observe(event))
+      : eventTransport ? eventTransport.subscribe((event) => this.observe(event)) : null;
   }
 
   observe(event) {
@@ -27,7 +36,13 @@ export class ObservabilityEngine {
     const suffix = normalized.type.split('.').at(-1);
     if (executionId && START_SUFFIXES.has(suffix)) this.#startSpan(normalized);
     if (executionId && TERMINAL_SUFFIXES.has(suffix)) this.#finishSpan(normalized);
-    if (executionId && normalized.type === 'execution.started') this.activeExecutions.add(executionId);
+    if (executionId && normalized.type === 'execution.started' && !this.activeExecutions.has(executionId)) {
+      if (this.activeExecutions.size >= this.maxActiveExecutions) {
+        this.activeExecutions.delete(this.activeExecutions.values().next().value);
+        this.#increment('active_executions.evicted');
+      }
+      this.activeExecutions.add(executionId);
+    }
     if (executionId && /^execution\.(completed|failed|cancelled)$/.test(normalized.type)) this.activeExecutions.delete(executionId);
 
     if (normalized.type === 'execution.completed') this.#increment('executions.completed');
@@ -91,6 +106,10 @@ export class ObservabilityEngine {
   }
 
   #increment(name, amount = 1) {
+    if (!this.metrics.has(name) && this.metrics.size >= this.maxMetricSeries) {
+      this.metrics.set('metrics.dropped_series', this.metrics.get('metrics.dropped_series') + 1);
+      return;
+    }
     this.metrics.set(name, (this.metrics.get(name) ?? 0) + amount);
   }
 
@@ -124,16 +143,24 @@ export class ObservabilityEngine {
     this.#increment(`duration.count.${span.name}`);
     this.#increment(`duration.total_ms.${span.name}`, durationMs);
     const max = this.metrics.get(`duration.max_ms.${span.name}`) ?? 0;
-    this.metrics.set(`duration.max_ms.${span.name}`, Math.max(max, durationMs));
+    this.#setMetric(`duration.max_ms.${span.name}`, Math.max(max, durationMs));
     const minName = `duration.min_ms.${span.name}`;
     const min = this.metrics.get(minName);
-    this.metrics.set(minName, min === undefined ? durationMs : Math.min(min, durationMs));
+    this.#setMetric(minName, min === undefined ? durationMs : Math.min(min, durationMs));
     this.#increment(`status.${span.name}.${span.status}`);
   }
 
   #evictOldestTrace() {
     const oldest = this.spans.keys().next().value;
     if (oldest) this.spans.delete(oldest);
+  }
+
+  #setMetric(name, value) {
+    if (!this.metrics.has(name) && this.metrics.size >= this.maxMetricSeries) {
+      this.#increment('metrics.dropped_series');
+      return;
+    }
+    this.metrics.set(name, value);
   }
 }
 

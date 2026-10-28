@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TaskGraphExecutor } from '../src/task-graph-executor.js';
+import { ExecutionStateStore } from '../src/state.js';
 
 function plan() {
   return {
@@ -58,6 +59,26 @@ test('enforces bounded parallelism', async () => {
   const result = await executor.execute({ ...plan(), tasks: plan().tasks.slice(0, 3), order: ['a', 'b', 'c'], taskCount: 3 }, {}, { executionId: 'x' }, { strategy: 'parallel', maxConcurrency: 2 });
   assert.equal(result.status, 'succeeded');
   assert.ok(peak <= 2);
+});
+
+test('task graph refuses to overwrite a newer state from another host', async () => {
+  const stateStore = new ExecutionStateStore();
+  const executor = new TaskGraphExecutor({ stateStore, executeTask: async () => {
+    await stateStore.update('stale-graph', { status: 'recovering' }, 0);
+    return { value: 1 };
+  } });
+  const single = { ...plan(), taskCount: 1, order: ['a'], tasks: [plan().tasks[0]] };
+  await assert.rejects(executor.execute(single, {}, { executionId: 'stale-graph' }), { code: 'EXECUTION_STATE_CONFLICT' });
+  assert.equal((await stateStore.get('stale-graph')).status, 'recovering');
+});
+
+test('parallel task state writes serialize their expected versions', async () => {
+  const stateStore = new ExecutionStateStore();
+  const executor = new TaskGraphExecutor({ stateStore, executeTask: async (task) => task.id });
+  const parallel = { ...plan(), taskCount: 3, order: ['a', 'b', 'c'], tasks: plan().tasks.slice(0, 3) };
+  const result = await executor.execute(parallel, {}, { executionId: 'parallel-state' }, { strategy: 'parallel', maxConcurrency: 2 });
+  assert.equal(result.status, 'succeeded');
+  assert.equal((await stateStore.get('parallel-state')).version, 4);
 });
 
 test('preserves completed work when fail-fast stops later scheduling', async () => {

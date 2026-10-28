@@ -27,3 +27,5 @@ jobs:
         run: npm run test:reverse-engineering
       - name: Run CLI tests
         run: npm run test:cli
+      - name: Measure Phase 4 local dispatch overhead
+        run: node scripts/benchmark-phase4.mjs 20

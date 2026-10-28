@@ -142,11 +142,11 @@ export class UnixWorkerServer {
 }
 
 export class UnixWorkerClient {
-  constructor({ socketPath, nodeId, authenticator, timeoutMs = 30_000, maxBytes = LIMIT } = {}) {
+  constructor({ socketPath, nodeId, authenticator, timeoutMs = 30_000, maxBytes = LIMIT, connectSocket = createConnection } = {}) {
     if (typeof socketPath !== 'string' || !socketPath.startsWith('/') || !ID.test(nodeId) ||
-        typeof authenticator?.sign !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+        typeof authenticator?.sign !== 'function' || typeof connectSocket !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
         !Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > LIMIT) throw new TypeError('Invalid Unix worker client');
-    Object.assign(this, { socketPath, nodeId, authenticator, timeoutMs, maxBytes });
+    Object.assign(this, { socketPath, nodeId, authenticator, timeoutMs, maxBytes, connectSocket });
   }
 
   async execute({ requestId = randomUUID(), capabilityId, input = {}, fence } = {}) {
@@ -155,11 +155,11 @@ export class UnixWorkerClient {
     const frame = Buffer.from(JSON.stringify(envelope) + '\n');
     if (frame.length > this.maxBytes) throw fault('REMOTE_FRAME_TOO_LARGE');
     return new Promise((resolve, reject) => {
-      const socket = createConnection(this.socketPath);
+      const socket = this.connectSocket(this.socketPath);
       let chunks = [], bytes = 0, done = false;
       const finish = (error, result) => { if (done) return; done = true; socket.destroy(); error ? reject(error) : resolve(result); };
       socket.setTimeout(this.timeoutMs, () => finish(fault('REMOTE_TIMEOUT')));
-      socket.on('connect', () => socket.write(frame));
+      socket.on(socket.encrypted ? 'secureConnect' : 'connect', () => socket.write(frame));
       socket.on('data', (chunk) => {
         bytes += chunk.length;
         if (bytes > this.maxBytes) return finish(fault('REMOTE_RESULT_TOO_LARGE'));

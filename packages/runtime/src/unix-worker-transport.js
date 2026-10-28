@@ -162,6 +162,7 @@ export class UnixWorkerClient {
       });
       socket.on('end', () => {
         try {
+          if (bytes === 0) throw fault('REMOTE_CONNECTION_CLOSED');
           const raw = Buffer.concat(chunks).toString('utf8');
           if (!raw.endsWith('\n')) throw fault('REMOTE_FRAME_INVALID');
           const response = JSON.parse(raw.slice(0, -1));

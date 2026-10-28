@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir, open } from 'node:fs/promises';
 import { writeAtomicJson } from './atomic-json.js';
 import path from 'node:path';
+import { withKernelFileLock } from './kernel-file-lock.js';
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled', 'rolled_back']);
 
@@ -55,39 +56,65 @@ export class ExecutionStateStore {
 }
 
 export class FileExecutionStateStore extends ExecutionStateStore {
-  #loadPromise = null;
-  #queue = Promise.resolve();
-  constructor(filePath) {
+  constructor(filePath, { maxRecords = 10_000, maxBytes = 16_777_216, lockTimeoutMs = 5_000 } = {}) {
     super();
-    if (typeof filePath !== 'string' || !filePath) throw new TypeError('FileExecutionStateStore requires a file path');
+    if (process.platform !== 'linux') throw new Error('FileExecutionStateStore requires Linux flock');
+    if (typeof filePath !== 'string' || !filePath ||
+        !Number.isSafeInteger(maxRecords) || maxRecords < 1 ||
+        !Number.isSafeInteger(maxBytes) || maxBytes < 1024 ||
+        !Number.isSafeInteger(lockTimeoutMs) || lockTimeoutMs < 1) throw new TypeError('Invalid FileExecutionStateStore configuration');
     this.filePath = path.resolve(filePath);
+    Object.assign(this, { maxRecords, maxBytes, lockTimeoutMs });
   }
 
-  #load() {
-    if (!this.#loadPromise) this.#loadPromise = (async () => {
-      let parsed;
-      try { parsed = JSON.parse(await readFile(this.filePath, 'utf8')); }
-      catch (error) { if (error?.code === 'ENOENT') parsed = []; else throw error; }
-      await super.restore(parsed);
-    })();
-    return this.#loadPromise;
-  }
-
-  #run(operation, persist = false) {
-    const result = this.#queue.then(async () => {
-      await this.#load();
-      const before = persist ? await super.list() : null;
+  async #load() {
+    let initialized = false;
+    try {
+      const marker = JSON.parse(await readFile(`${this.filePath}.initialized`, 'utf8'));
+      if (marker?.schemaVersion !== '0.1.0' || marker.initialized !== true) throw new Error('Invalid execution state marker');
+      initialized = true;
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    let parsed, fileExists = false;
+    try {
+      const handle = await open(this.filePath, 'r');
       try {
-        const value = await operation();
-        if (persist) await writeAtomicJson(this.filePath, await super.list());
-        return value;
-      } catch (error) {
-        if (persist) await super.restore(before);
-        throw error;
+        if ((await handle.stat()).size > this.maxBytes) throw new Error('Execution state file exceeds byte limit');
+        parsed = JSON.parse(await handle.readFile('utf8'));
+        fileExists = true;
+      } finally { await handle.close(); }
+    } catch (error) {
+      if (error.code !== 'ENOENT' || initialized) throw error;
+      parsed = [];
+    }
+    if (!Array.isArray(parsed) || parsed.length > this.maxRecords) throw new Error('Invalid execution state file');
+    await super.restore(parsed);
+    if (fileExists && !initialized) await this.#markInitialized();
+  }
+
+  async #markInitialized() {
+    let marker;
+    try {
+      marker = await open(`${this.filePath}.initialized`, 'wx', 0o600);
+      await marker.writeFile(JSON.stringify({ schemaVersion: '0.1.0', initialized: true }));
+      await marker.sync();
+    } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    finally { await marker?.close(); }
+  }
+
+  async #run(operation, persist = false) {
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    return withKernelFileLock(`${this.filePath}.flock`, this.lockTimeoutMs, async () => {
+      await this.#load();
+      const value = await operation();
+      if (persist) {
+        const records = await super.list();
+        const encoded = JSON.stringify(records);
+        if (records.length > this.maxRecords || Buffer.byteLength(encoded) > this.maxBytes) throw new Error('Execution state capacity exceeded');
+        await this.#markInitialized();
+        await writeAtomicJson(this.filePath, records, { space: 0 });
       }
+      return value;
     });
-    this.#queue = result.catch(() => {});
-    return result;
   }
 
   create(state) { const snapshot = clone(state); return this.#run(() => super.create(snapshot), true); }

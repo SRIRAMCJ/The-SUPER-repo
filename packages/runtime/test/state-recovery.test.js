@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ExecutionPlanExecutor, ExecutionRecovery, ExecutionStateStore, FileExecutionStateStore } from '../src/index.js';
 
 function plan() {
@@ -46,6 +48,41 @@ test('file state store survives recreation with the same versioned state', async
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('file state store serializes concurrent hosts and refuses missing initialized state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'super-state-race-'));
+  try {
+    const filePath = path.join(root, 'execution-state.json');
+    const first = new FileExecutionStateStore(filePath);
+    const second = new FileExecutionStateStore(filePath);
+    const created = await first.create({ type: 'execution-state', executionId: 'run', status: 'running' });
+    const results = await Promise.allSettled([
+      first.update('run', { status: 'succeeded' }, created.version),
+      second.update('run', { status: 'failed' }, created.version)
+    ]);
+    assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1);
+    assert.equal(results.find((item) => item.status === 'rejected').reason.code, 'EXECUTION_STATE_CONFLICT');
+    assert.equal((await new FileExecutionStateStore(filePath).get('run')).version, 1);
+    await rm(filePath);
+    await assert.rejects(new FileExecutionStateStore(filePath).get('run'), { code: 'ENOENT' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('separate processes cannot both advance the same state version', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'super-state-process-'));
+  try {
+    const filePath = path.join(root, 'execution-state.json');
+    const store = new FileExecutionStateStore(filePath);
+    await store.create({ type: 'execution-state', executionId: 'run', status: 'running' });
+    const moduleUrl = new URL('../src/state.js', import.meta.url).href;
+    const script = `import { FileExecutionStateStore } from ${JSON.stringify(moduleUrl)}; const store = new FileExecutionStateStore(process.argv[1]); try { await store.update('run', { status: 'child' }, 0); console.log('updated'); } catch (error) { if (error.code !== 'EXECUTION_STATE_CONFLICT') throw error; console.log(error.code); }`;
+    const child = promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, filePath]);
+    const parent = store.update('run', { status: 'parent' }, 0).then(() => 'updated', (error) => error.code);
+    const [childResult, parentResult] = await Promise.all([child, parent]);
+    assert.deepEqual([childResult.stdout.trim(), parentResult].sort(), ['EXECUTION_STATE_CONFLICT', 'updated'].sort());
+    assert.equal((await new FileExecutionStateStore(filePath).get('run')).version, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('plan execution records a recovery cursor and resumes only the failed step', async () => {

@@ -31,10 +31,9 @@ test('failed file writes preserve memory and do not poison later writes', async 
     const backup = await readFile(file, 'utf8');
     await rm(file); await mkdir(file);
     await assert.rejects(Store === FileMissionStore ? store.save({ missionId: 'new' }) : store.create({ executionId: 'new', type: 'execution-state' }));
-    if (Store === FileMissionStore) await assert.rejects(store.list());
-    else assert.equal((await store.list()).length, 1);
+    await assert.rejects(store.list());
     await rm(file, { recursive: true });
-    if (Store === FileMissionStore) await writeFile(file, backup);
+    await writeFile(file, backup);
     if (Store === FileMissionStore) await store.save({ missionId: 'new' }); else await store.create({ executionId: 'new', type: 'execution-state' });
     assert.equal((await new Store(file).list()).length, 2);
   }

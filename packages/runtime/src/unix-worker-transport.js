@@ -109,7 +109,7 @@ export class UnixWorkerServer {
         result = JSON.parse(serialized).result;
         let response;
         try { response = JSON.stringify(this.authenticator.signResponse(body, { result })); }
-        catch { throw fault('REMOTE_RESULT_INVALID'); }
+        catch (error) { throw fault(error?.message === 'Request exceeds byte limit' ? 'REMOTE_RESULT_TOO_LARGE' : 'REMOTE_RESULT_INVALID'); }
         if (Buffer.byteLength(response) + 1 > this.maxBytes) throw fault('REMOTE_RESULT_TOO_LARGE');
       }
       catch (error) {

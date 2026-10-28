@@ -59,6 +59,7 @@ export { RemoteExecutionTransport, REMOTE_EXECUTION_TRANSPORT_SCHEMA_VERSION, RE
 export { RemoteWorkerAuthenticator } from './remote-worker-auth.js';
 export { FileRemoteNonceStore } from './file-remote-nonce-store.js';
 export { UnixWorkerServer, UnixWorkerClient } from './unix-worker-transport.js';
+export { TlsWorkerBridge, TlsWorkerClient } from './tls-worker-transport.js';
 export { RemoteWorkerCoordinator } from './remote-worker-coordinator.js';
 export { createRemoteMissionTaskHandler } from './remote-mission-task.js';
 export { AgentRuntime } from './agent.js';

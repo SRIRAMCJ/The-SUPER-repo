@@ -45,6 +45,29 @@ export class RemoteWorkerAuthenticator {
     return structuredClone(body);
   }
 
+  signResponse(request, payload) {
+    if (!ID.test(request?.requestId) || !ID.test(request?.nodeId) || !ID.test(request?.nonce) ||
+        !payload || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('Invalid worker response context');
+    const body = { schemaVersion: VERSION, type: 'remote-worker-response', requestId: request.requestId,
+      nodeId: request.nodeId, requestNonce: request.nonce, payload };
+    return { body, mac: this.#mac(encode(body, this.maxBytes)) };
+  }
+
+  verifyResponse(envelope, request) {
+    const body = envelope?.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || body.schemaVersion !== VERSION ||
+        body.type !== 'remote-worker-response' || !ID.test(body.requestId) || !ID.test(body.nodeId) ||
+        !ID.test(body.requestNonce) || !body.payload || typeof body.payload !== 'object' ||
+        Array.isArray(body.payload) || !MAC.test(envelope.mac)) throw fault('REMOTE_RESPONSE_INVALID');
+    let serialized;
+    try { serialized = encode(body, this.maxBytes); } catch { throw fault('REMOTE_RESPONSE_INVALID'); }
+    if (!timingSafeEqual(Buffer.from(this.#mac(serialized), 'hex'), Buffer.from(envelope.mac, 'hex')))
+      throw fault('REMOTE_RESPONSE_INVALID');
+    if (body.requestId !== request?.requestId || body.nodeId !== request?.nodeId || body.requestNonce !== request?.nonce)
+      throw fault('REMOTE_RESPONSE_MISMATCH');
+    return structuredClone(body.payload);
+  }
+
   #validate(envelope) {
     const body = envelope?.body;
     if (!body || typeof body !== 'object' || Array.isArray(body) || body.schemaVersion !== VERSION ||

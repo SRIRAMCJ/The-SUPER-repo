@@ -22,7 +22,7 @@ export class TaskGraphExecutor {
     validateTaskPlan(plan);
     const config = normalizeOptions(options, plan.taskCount);
     const executionId = context.taskGraphExecutionId ?? context.executionId ?? createExecutionId();
-    return this.#withAdmission(executionId, plan, (activeTasks) => this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false, activeTasks));
+    return this.#withAdmission(executionId, plan, (activeTasks) => this.#run(plan, executionId, this.clock().toISOString(), input, context, config, new Map(), 1, false, activeTasks, null));
   }
 
   async resume(plan, executionId, context = {}, options = {}) {
@@ -47,7 +47,7 @@ export class TaskGraphExecutor {
     } catch (error) {
       return failure(executionId, plan, error?.code ?? 'EXECUTION_STATE_CONFLICT', error instanceof Error ? error.message : String(error), Boolean(error?.retryable));
     }
-    return this.#run(plan, executionId, state.startedAt ?? this.clock().toISOString(), state.input ?? {}, context, config, priorResults, claimed.attempt, true, activeTasks);
+    return this.#run(plan, executionId, state.startedAt ?? this.clock().toISOString(), state.input ?? {}, context, config, priorResults, claimed.attempt, true, activeTasks, claimed.version);
   }
 
   async #withAdmission(executionId, plan, run) {
@@ -65,10 +65,13 @@ export class TaskGraphExecutor {
     }
   }
 
-  async #run(plan, executionId, startedAt, input, context, config, results, attempt, resumed, activeTasks) {
+  async #run(plan, executionId, startedAt, input, context, config, results, attempt, resumed, activeTasks, stateVersion) {
     const byId = new Map(plan.tasks.map((task) => [task.id, task]));
     const pending = new Set(plan.order.filter((id) => !results.has(id)));
-    if (this.stateStore && !resumed) await this.stateStore.create({ schemaVersion: '0.1.0', type: 'execution-state', executionId, kind: 'task-graph', status: 'running', plan, input, results: [], strategy: config.strategy, maxConcurrency: config.maxConcurrency, failFast: config.failFast, attempt, startedAt });
+    if (this.stateStore && !resumed) {
+      const created = await this.stateStore.create({ schemaVersion: '0.1.0', type: 'execution-state', executionId, kind: 'task-graph', status: 'running', plan, input, results: [], strategy: config.strategy, maxConcurrency: config.maxConcurrency, failFast: config.failFast, attempt, startedAt });
+      stateVersion = created.version;
+    }
     const controller = new AbortController();
     let cancelPromise;
     try {
@@ -77,7 +80,16 @@ export class TaskGraphExecutor {
       return failure(executionId, plan, error?.code ?? 'EXECUTION_ALREADY_REGISTERED', error instanceof Error ? error.message : String(error));
     }
     this.events?.emit({ type: resumed ? 'task-graph.resumed' : 'task-graph.started', executionId, status: 'started', data: { taskCount: plan.taskCount, strategy: config.strategy, maxConcurrency: config.maxConcurrency, failFast: config.failFast, attempt } });
-    const persist = async (patch) => { if (this.stateStore) await this.stateStore.update(executionId, patch); };
+    let persistQueue = Promise.resolve();
+    const persist = (patch) => {
+      if (!this.stateStore) return Promise.resolve();
+      const pending = persistQueue.then(async () => {
+        const updated = await this.stateStore.update(executionId, patch, stateVersion);
+        stateVersion = updated.version;
+      });
+      persistQueue = pending.catch(() => {});
+      return pending;
+    };
 
     const runTask = async (task) => {
       const taskInput = task.input === null || task.input === undefined ? input : task.input;

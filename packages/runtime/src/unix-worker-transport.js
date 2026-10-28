@@ -68,7 +68,7 @@ export class UnixWorkerServer {
       chunks.push(chunk.subarray(0, line));
       let envelope;
       try { envelope = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-      catch { this.#reply(socket, { error: { code: 'REMOTE_FRAME_INVALID' } }); return; }
+      catch { socket.destroy(); return; }
       chunks = [];
       void this.#execute(socket, envelope);
     });
@@ -93,7 +93,7 @@ export class UnixWorkerServer {
       const claim = await this.idempotencyStore.claim(key, fingerprint);
       if (claim.state === 'replay') {
         const response = claim.record.response;
-        this.#reply(socket, { requestId: body.requestId, ...response });
+        this.#reply(socket, body, response);
         return;
       }
       if (claim.state !== 'claimed') throw fault({ conflict: 'REMOTE_REQUEST_CONFLICT', in_progress: 'REMOTE_IN_PROGRESS', recovery_required: 'REMOTE_RECOVERY_REQUIRED' }[claim.state] ?? 'REMOTE_CLAIM_INVALID');
@@ -104,34 +104,39 @@ export class UnixWorkerServer {
       try {
         result = await this.handlers[capabilityId](structuredClone(input), context);
         let serialized;
-        try { serialized = JSON.stringify({ requestId: body.requestId, result }); }
+        try { serialized = JSON.stringify({ result }); }
         catch { throw fault('REMOTE_RESULT_INVALID'); }
-        if (Buffer.byteLength(serialized) + 1 > this.maxBytes) throw fault('REMOTE_RESULT_TOO_LARGE');
         result = JSON.parse(serialized).result;
+        let response;
+        try { response = JSON.stringify(this.authenticator.signResponse(body, { result })); }
+        catch (error) { throw fault(error?.message === 'Request exceeds byte limit' ? 'REMOTE_RESULT_TOO_LARGE' : 'REMOTE_RESULT_INVALID'); }
+        if (Buffer.byteLength(response) + 1 > this.maxBytes) throw fault('REMOTE_RESULT_TOO_LARGE');
       }
       catch (error) {
         const code = error?.code ?? 'REMOTE_WORKER_FAILED';
         await this.auditJournal.append({ type: 'remote.worker.failed', requestId: body.requestId, nodeId: this.nodeId, capabilityId, code });
         if (!await this.idempotencyStore.completeClaim(key, fingerprint, claim.record.claimToken, { error: { code } })) throw fault('REMOTE_RECOVERY_REQUIRED');
-        this.#reply(socket, { requestId: body.requestId, error: { code } });
+        this.#reply(socket, body, { error: { code } });
         return;
       }
       await this.auditJournal.append({ type: 'remote.worker.succeeded', requestId: body.requestId, nodeId: this.nodeId, capabilityId });
       if (!await this.idempotencyStore.completeClaim(key, fingerprint, claim.record.claimToken, { result })) throw fault('REMOTE_RECOVERY_REQUIRED');
-      this.#reply(socket, { requestId: body.requestId, result });
+      this.#reply(socket, body, { result });
     } catch (error) {
       // A failed terminal audit can follow a completed effect. The caller must
       // reconcile that uncertain outcome instead of blindly retrying it.
-      this.#reply(socket, { error: { code: error?.code ?? 'REMOTE_WORKER_FAILED' } });
+      this.#reply(socket, envelope?.body, { error: { code: error?.code ?? 'REMOTE_WORKER_FAILED' } });
     }
   }
 
-  #reply(socket, value) {
+  #reply(socket, request, value) {
     if (socket.destroyed) return;
     let frame;
-    try { frame = Buffer.from(JSON.stringify(value) + '\n'); }
-    catch { frame = Buffer.from('{"error":{"code":"REMOTE_RESULT_INVALID"}}\n'); }
-    if (frame.length > this.maxBytes) frame = Buffer.from('{"error":{"code":"REMOTE_RESULT_TOO_LARGE"}}\n');
+    try { frame = Buffer.from(JSON.stringify(this.authenticator.signResponse(request, value)) + '\n'); }
+    catch { socket.destroy(); return; }
+    if (frame.length > this.maxBytes) {
+      frame = Buffer.from(JSON.stringify(this.authenticator.signResponse(request, { error: { code: 'REMOTE_RESULT_TOO_LARGE' } })) + '\n');
+    }
     socket.end(frame);
   }
 }
@@ -165,9 +170,8 @@ export class UnixWorkerClient {
           if (bytes === 0) throw fault('REMOTE_CONNECTION_CLOSED');
           const raw = Buffer.concat(chunks).toString('utf8');
           if (!raw.endsWith('\n')) throw fault('REMOTE_FRAME_INVALID');
-          const response = JSON.parse(raw.slice(0, -1));
+          const response = this.authenticator.verifyResponse(JSON.parse(raw.slice(0, -1)), envelope.body);
           if (response.error) return finish(fault(response.error.code));
-          if (response.requestId !== requestId) throw fault('REMOTE_RESPONSE_MISMATCH');
           finish(null, response.result);
         } catch (error) { finish(error); }
       });

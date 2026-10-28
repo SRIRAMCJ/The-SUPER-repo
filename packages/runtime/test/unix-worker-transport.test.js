@@ -38,7 +38,7 @@ test('worker rejects an invalid key before calling a capability', async () => {
   try {
     await server.start();
     const client = new UnixWorkerClient({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key: Buffer.alloc(32, 14) }) });
-    await assert.rejects(client.execute({ capabilityId: 'task' }), { code: 'REMOTE_AUTH_INVALID' });
+    await assert.rejects(client.execute({ capabilityId: 'task' }), { code: 'REMOTE_RESPONSE_INVALID' });
     assert.equal(calls, 0);
   } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
 });

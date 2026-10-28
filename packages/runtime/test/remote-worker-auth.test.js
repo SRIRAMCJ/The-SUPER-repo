@@ -78,3 +78,16 @@ test('simultaneous workers admit one copy of an envelope', async () => {
     assert.equal(results.filter((result) => result.reason?.code === 'REMOTE_AUTH_REPLAY').length, 7);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('worker response MAC binds node, request, nonce, and result', () => {
+  const auth = new RemoteWorkerAuthenticator({ key, clock: () => 100_000, nonceFactory: () => 'nonce-1' });
+  const request = auth.sign({ requestId: 'request-1', nodeId: 'node-1', payload: {} }).body;
+  const response = auth.signResponse(request, { result: { value: 42 } });
+  assert.deepEqual(auth.verifyResponse(response, request), { result: { value: 42 } });
+  const tampered = structuredClone(response);
+  tampered.body.payload.result.value = 43;
+  awaitError(() => auth.verifyResponse(tampered, request), 'REMOTE_RESPONSE_INVALID');
+  awaitError(() => auth.verifyResponse(response, { ...request, nonce: 'nonce-2' }), 'REMOTE_RESPONSE_MISMATCH');
+  awaitError(() => auth.verifyResponse(response, { ...request, nodeId: 'node-2' }), 'REMOTE_RESPONSE_MISMATCH');
+  awaitError(() => new RemoteWorkerAuthenticator({ key: Buffer.alloc(32, 8) }).verifyResponse(response, request), 'REMOTE_RESPONSE_INVALID');
+});

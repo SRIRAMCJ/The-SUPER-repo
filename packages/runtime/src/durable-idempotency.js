@@ -1,4 +1,4 @@
-import { mkdir, readFile, open, rename, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, open, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { withKernelFileLock } from './kernel-file-lock.js';
@@ -112,12 +112,9 @@ export class DurableIdempotencyStore {
   async #putRecord(record) { await this.#append(journalEntry(record)); this.#records.set(record.key, clone(record)); }
   async #append(record) {
     await this.#markInitialized();
-    const handle = await open(this.filePath, 'a', 0o600);
-    try {
-      await handle.writeFile(JSON.stringify(record) + '\n', 'utf8');
-      await handle.sync();
-      this.#observed = true;
-    } finally { await handle.close(); }
+    await appendFile(this.filePath, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600 });
+    this.#observed = true;
+    const handle = await open(this.filePath, 'r'); try { await handle.sync(); } finally { await handle.close(); }
   }
   async #reload() {
     let initialized = false;

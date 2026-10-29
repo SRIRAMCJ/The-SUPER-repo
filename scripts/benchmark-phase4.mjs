@@ -13,6 +13,20 @@ if (!Number.isSafeInteger(samples) || samples < 20 || samples > 200) throw new T
 const directory = await mkdtemp(path.join(os.tmpdir(), 'super-phase4-benchmark-'));
 const openssl = promisify(execFile);
 let worker, bridge;
+const storeTimings = Object.create(null);
+function measureStore(store, method, label) {
+  const original = store[method].bind(store);
+  store[method] = async (...args) => {
+    const start = performance.now();
+    try { return await original(...args); }
+    finally {
+      const item = storeTimings[label] ??= { count: 0, totalMs: 0 };
+      item.count++;
+      item.totalMs += performance.now() - start;
+    }
+  };
+  return store;
+}
 async function run(...args) { await openssl('openssl', args, { cwd: directory }); }
 async function certificates() {
   await run('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=Benchmark CA', '-keyout', 'ca.key', '-out', 'ca.crt');
@@ -68,10 +82,13 @@ try {
   const certs = await certificates();
   const key = Buffer.alloc(32, 23);
   const socketPath = path.join(directory, 'worker.sock');
+  const nonceStore = measureStore(new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }), 'consume', 'nonceConsume');
+  const idempotencyStore = await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
+  measureStore(idempotencyStore, 'claim', 'idempotencyClaim');
+  measureStore(idempotencyStore, 'completeClaim', 'idempotencyComplete');
+  const auditJournal = measureStore(new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 }), 'append', 'auditAppend');
   worker = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
-    nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }),
-    idempotencyStore: await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init(),
-    auditJournal: new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 }),
+    nonceStore, idempotencyStore, auditJournal,
     authorize: () => ({ allowed: true }), handlers: { echo: (input) => input } });
   await worker.start();
   bridge = new TlsWorkerBridge({ host: '127.0.0.1', port: 0, socketPath, key: certs.serverKey,
@@ -88,7 +105,9 @@ try {
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `tls-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTlsConcurrent = await measureConcurrent(samples, 4, (index) => tls.execute({ requestId: `tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
   process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, samples,
-    unix, mutualTls, mutualTlsConcurrent, note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; not network capacity.' }, null, 2)}\n`);
+    unix, mutualTls, mutualTlsConcurrent,
+    storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),
+    note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; store averages include lock contention; not network capacity.' }, null, 2)}\n`);
 } finally {
   await bridge?.stop();
   await worker?.stop();

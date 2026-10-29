@@ -23,7 +23,9 @@ export class RemoteWorkerCoordinator {
         throw fault('REMOTE_EXECUTION_CONFLICT');
       return structuredClone(existing.result.value);
     }
-    const lease = await this.leaseStore.claim(executionId, this.nodeId, this.leaseMs);
+    const identity = createHash('sha256').update(JSON.stringify([requestId, capabilityId, fingerprint])).digest('hex');
+    if (existing && existing.identity !== identity) throw fault('REMOTE_EXECUTION_CONFLICT');
+    const lease = await this.leaseStore.claim(executionId, this.nodeId, this.leaseMs, identity);
     const fence = { key: executionId, epoch: lease.epoch, token: lease.token };
     try {
       const value = await this.client.execute({ requestId, capabilityId, input, fence });

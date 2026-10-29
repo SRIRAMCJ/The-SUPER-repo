@@ -29,6 +29,12 @@ test('PostgreSQL worker stores single-flight and audit across two pools', { skip
     assert.equal(new Set(events.map((e) => e.sequence)).size, 2);
     const replay = await stores[0].audit.replay({ afterSequence: events[0].sequence - 1 });
     assert.ok(replay.events.some((entry) => entry.event.key === key));
+    const sequence = events[0].sequence;
+    const { rows: [saved] } = await pools[0].query('SELECT event FROM super_worker_audit WHERE sequence=$1', [sequence]);
+    try {
+      await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify({ ...saved.event, type: 'tampered' })]);
+      await assert.rejects(stores[1].audit.replay(), { code: 'AUDIT_CORRUPT' });
+    } finally { await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify(saved.event)]); }
   } finally { await Promise.all(pools.map((pool) => pool.end())); }
 });
 

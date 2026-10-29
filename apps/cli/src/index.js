@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { createRepositoryAnalystRuntime } from '../../../packages/agents/repository-analyst/src/index.js';
 import { createStaticInvestigationRuntime } from '../../../packages/tools/reverse-engineering/src/runtime.js';
 
@@ -9,6 +11,19 @@ const args = process.argv.slice(2);
 async function main() {
   const command = args[0];
   if (!command || command === 'help' || command === '--help' || command === '-h') return printHelp();
+  if (command === 'references') {
+    const unknown = args.slice(1).filter((arg) => arg !== '--json' && !arg.startsWith('--phase='));
+    if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
+    const rawPhase = args.find((arg) => arg.startsWith('--phase='));
+    const phase = rawPhase ? Number(rawPhase.slice('--phase='.length)) : undefined;
+    if (phase !== undefined && (!Number.isInteger(phase) || phase < 1 || phase > 8)) throw new Error('--phase must be an integer from 1 to 8');
+    const catalogPath = fileURLToPath(new URL('../../../docs/reference-adoption.json', import.meta.url));
+    const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+    const entries = catalog.references.filter((entry) => phase === undefined || entry.phase === phase);
+    if (args.includes('--json')) process.stdout.write(`${JSON.stringify({ schemaVersion: catalog.schemaVersion, references: entries }, null, 2)}\n`);
+    else for (const entry of entries) console.log(`${entry.phase}\t${entry.name}\t${entry.status}\t${entry.url}`);
+    return;
+  }
   if (command === 'investigate') {
     const target = args[1];
     if (!target || target.startsWith('--')) throw new Error('Usage: super investigate <path> [--query=text] [--json]');
@@ -85,6 +100,7 @@ function printHelp() {
   console.log('Usage:');
   console.log('  super analyze [path] [--json] [--max-files=N]');
   console.log('  super investigate <path> [--query=text] [--max-files=N] [--max-findings=N] [--json]');
+  console.log('  super references [--phase=1..8] [--json]');
 }
 
 main().catch((error) => {

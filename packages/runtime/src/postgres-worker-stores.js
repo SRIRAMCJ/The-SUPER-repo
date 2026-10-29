@@ -2,6 +2,11 @@ import { randomUUID, createHash } from 'node:crypto';
 
 function fault(code) { return Object.assign(new Error(code), { code }); }
 const ZERO = '0'.repeat(64);
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
 export class PostgresWorkerIdempotencyStore {
   constructor(pool, { ttlMs = 300000 } = {}) {
     if (typeof pool?.connect !== 'function' || !Number.isSafeInteger(ttlMs) || ttlMs < 1000) throw new TypeError('Invalid PostgreSQL idempotency store');
@@ -40,6 +45,23 @@ export class PostgresWorkerIdempotencyStore {
       WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at > clock_timestamp()`, [key, fingerprint, claimToken, JSON.stringify(response), this.ttlMs]);
     return rowCount === 1;
   }
+  async reconcileClaim(key, fingerprint, claimToken, response, { reason } = {}) {
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024 ||
+        typeof key !== 'string' || typeof fingerprint !== 'string' || typeof claimToken !== 'string') throw new TypeError('Invalid reconciliation');
+    const payload = JSON.stringify(response);
+    if (!payload || Buffer.byteLength(payload) > 65536) throw new TypeError('Invalid reconciliation response');
+    const { rowCount } = await this.pool.query(`UPDATE super_worker_requests SET status='completed', response=$4::jsonb,
+      expires_at=clock_timestamp()+($5::bigint * interval '1 millisecond')
+      WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()`, [key, fingerprint, claimToken, payload, this.ttlMs]);
+    return rowCount === 1;
+  }
+  async releaseClaim(key, fingerprint, claimToken, reason) {
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024 ||
+        typeof key !== 'string' || typeof fingerprint !== 'string' || typeof claimToken !== 'string') throw new TypeError('Invalid release');
+    const { rowCount } = await this.pool.query(`DELETE FROM super_worker_requests
+      WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()`, [key, fingerprint, claimToken]);
+    return rowCount === 1;
+  }
 }
 
 export class PostgresWorkerAuditJournal {
@@ -52,7 +74,7 @@ export class PostgresWorkerAuditJournal {
   }
   async append(event) {
     if (!event || typeof event.type !== 'string') throw new TypeError('Invalid audit event');
-    const payload = JSON.stringify(event);
+    const payload = JSON.stringify(canonical(event));
     if (!payload || Buffer.byteLength(payload) > 65536) throw new TypeError('Audit event too large');
     const client = await this.pool.connect();
     try {
@@ -65,6 +87,29 @@ export class PostgresWorkerAuditJournal {
       await client.query('UPDATE super_worker_audit_head SET sequence=$1, hash=$2 WHERE id=1', [sequence, hash]);
       await client.query('COMMIT');
       return { sequence, hash };
+    } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+    finally { client.release(); }
+  }
+  async replay({ afterSequence = 0, limit = 100 } = {}) {
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10000) throw new TypeError('Invalid audit cursor');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1');
+      const { rows } = await client.query('SELECT sequence, previous_hash, hash, event FROM super_worker_audit ORDER BY sequence');
+      let previous = ZERO, sequence = 0;
+      const events = [];
+      for (const row of rows) {
+        sequence++;
+        const payload = JSON.stringify(canonical(row.event));
+        const hash = createHash('sha256').update(`${previous}\n${sequence}\n${payload}`).digest('hex');
+        if (Number(row.sequence) !== sequence || row.previous_hash !== previous || row.hash !== hash) throw fault('AUDIT_CORRUPT');
+        previous = hash;
+        if (sequence > afterSequence && events.length < limit) events.push({ sequence, event: row.event });
+      }
+      if (sequence !== Number(head.sequence) || previous !== head.hash || afterSequence > sequence) throw fault('AUDIT_CORRUPT');
+      await client.query('COMMIT');
+      return { events, head: { sequence, hash: previous } };
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }

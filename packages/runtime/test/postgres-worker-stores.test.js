@@ -27,7 +27,30 @@ test('PostgreSQL worker stores single-flight and audit across two pools', { skip
     assert.equal((await stores[1-owner].requests.claim(key, 'other')).state, 'conflict');
     const events = await Promise.all(stores.map(({ audit }) => audit.append({ type: 'worker.test', key })));
     assert.equal(new Set(events.map((e) => e.sequence)).size, 2);
+    const replay = await stores[0].audit.replay({ afterSequence: events[0].sequence - 1 });
+    assert.ok(replay.events.some((entry) => entry.event.key === key));
+    const sequence = events[0].sequence;
+    const { rows: [saved] } = await pools[0].query('SELECT event FROM super_worker_audit WHERE sequence=$1', [sequence]);
+    try {
+      await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify({ ...saved.event, type: 'tampered' })]);
+      await assert.rejects(stores[1].audit.replay(), { code: 'AUDIT_CORRUPT' });
+    } finally { await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify(saved.event)]); }
   } finally { await Promise.all(pools.map((pool) => pool.end())); }
+});
+
+test('expired PostgreSQL claims require token-bound operator reconciliation', { skip: !url }, async () => {
+  const { Pool } = await import('pg');
+  const pool = new Pool({ connectionString: url });
+  try {
+    const store = await new PostgresWorkerIdempotencyStore(pool, { ttlMs: 1000 }).init();
+    const key = randomUUID();
+    const claim = await store.claim(key, 'fingerprint');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal((await store.claim(key, 'fingerprint')).state, 'recovery_required');
+    assert.equal(await store.reconcileClaim(key, 'fingerprint', 'wrong', { result: 1 }, { reason: 'effect verified' }), false);
+    assert.equal(await store.reconcileClaim(key, 'fingerprint', claim.record.claimToken, { result: 2 }, { reason: 'effect verified' }), true);
+    assert.deepEqual((await store.claim(key, 'fingerprint')).record.response, { result: 2 });
+  } finally { await pool.end(); }
 });
 
 test('governed Unix worker dispatch uses PostgreSQL nonce, audit, and idempotency stores', { skip: !url }, async () => {

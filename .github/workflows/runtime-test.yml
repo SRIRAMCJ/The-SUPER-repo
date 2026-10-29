@@ -29,3 +29,5 @@ jobs:
         run: npm run test:cli
       - name: Measure Phase 4 local dispatch overhead
         run: node scripts/benchmark-phase4.mjs 20
+      - name: Measure SQLite coordination slice
+        run: node scripts/benchmark-sqlite-coordination.mjs 100

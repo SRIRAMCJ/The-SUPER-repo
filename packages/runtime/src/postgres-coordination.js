@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -7,17 +7,37 @@ function fault(code) { return Object.assign(new Error(code), { code }); }
 // Pool is injected; deployment supplies a supported PostgreSQL client and TLS.
 // Each transaction holds one connection until COMMIT or ROLLBACK.
 export class PostgresCoordinationStore {
-  constructor(pool) {
-    if (typeof pool?.connect !== 'function') throw new TypeError('PostgreSQL pool requires connect()');
+  constructor(pool, { maxNonces = 10000 } = {}) {
+    if (typeof pool?.connect !== 'function' || !Number.isSafeInteger(maxNonces) || maxNonces < 1 || maxNonces > 1000000) throw new TypeError('Invalid PostgreSQL coordinator');
     this.pool = pool;
+    this.maxNonces = maxNonces;
   }
   async init() {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS super_leases (
       name text PRIMARY KEY, owner text NOT NULL, token text, epoch bigint NOT NULL,
       expires_at timestamptz NOT NULL, identity text NOT NULL);
       CREATE TABLE IF NOT EXISTS super_effects (
-      name text PRIMARY KEY, value jsonb NOT NULL, epoch bigint NOT NULL);`);
+      name text PRIMARY KEY, value jsonb NOT NULL, epoch bigint NOT NULL);
+      CREATE TABLE IF NOT EXISTS super_nonces (
+      digest text PRIMARY KEY, expires_at bigint NOT NULL);`);
     return this;
+  }
+  async consume(nonce, expiresAt) {
+    if (!ID.test(nonce) || !Number.isSafeInteger(expiresAt)) throw new TypeError('Invalid nonce or expiry');
+    const digest = createHash('sha256').update(nonce).digest('hex');
+    return this.transaction(async (client) => {
+      // Serializes the bounded capacity decision across independent hosts.
+      await client.query("SELECT pg_advisory_xact_lock(845301, 1)");
+      const { rows: [time] } = await client.query('SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now');
+      const now = Number(time.now);
+      if (expiresAt < now) throw fault('REMOTE_AUTH_EXPIRED');
+      await client.query('DELETE FROM super_nonces WHERE expires_at < $1', [now]);
+      const { rows: [existing] } = await client.query('SELECT 1 FROM super_nonces WHERE digest=$1', [digest]);
+      if (existing) throw fault('REMOTE_AUTH_REPLAY');
+      const { rows: [capacity] } = await client.query('SELECT count(*)::integer AS count FROM super_nonces');
+      if (capacity.count >= this.maxNonces) throw fault('REMOTE_AUTH_CAPACITY');
+      await client.query('INSERT INTO super_nonces (digest, expires_at) VALUES ($1, $2)', [digest, expiresAt]);
+    });
   }
   async transaction(operation) {
     const client = await this.pool.connect();

@@ -83,3 +83,4 @@ export { RuntimeRequestIdentity } from './request-identity.js';
 export { RuntimeBearerAuthorizer } from './bearer-authorizer.js';
 export { SqliteCoordinationStore } from './sqlite-coordination.js';
 export { PostgresCoordinationStore } from './postgres-coordination.js';
+export { PostgresWorkerIdempotencyStore, PostgresWorkerAuditJournal } from './postgres-worker-stores.js';

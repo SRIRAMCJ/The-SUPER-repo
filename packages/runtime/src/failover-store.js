@@ -16,7 +16,7 @@ export class FileFailoverStore {
     this.lockTimeoutSeconds = lockTimeoutSeconds;
   }
 
-  claim(name, owner, leaseMs = 30_000) { return this.#call({ action: 'claim', name, owner, leaseMs }); }
+  claim(name, owner, leaseMs = 30_000, identity = null) { return this.#call({ action: 'claim', name, owner, leaseMs, identity }); }
   renew(name, lease, leaseMs = 30_000) { return this.#call({ action: 'renew', name, ...credentials(lease), leaseMs }); }
   commit(name, lease, result) { return this.#call({ action: 'commit', name, ...credentials(lease), result }); }
   writeFencedJson(name, lease, destinationPath, value) {

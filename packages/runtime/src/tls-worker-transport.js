@@ -39,7 +39,9 @@ export class TlsWorkerBridge {
   async start() {
     if (this.#server) throw new Error('TLS worker bridge already started');
     const server = createServer({ key: this.key, cert: this.cert, ca: this.ca, requestCert: true,
-      rejectUnauthorized: true, minVersion: 'TLSv1.3' }, (socket) => this.#accept(socket));
+      rejectUnauthorized: true, minVersion: 'TLSv1.3', handshakeTimeout: this.timeoutMs }, (socket) => this.#accept(socket));
+    // net.Server accounts for TCP sockets before TLS authentication finishes.
+    server.maxConnections = this.maxConnections;
     this.#server = server;
     try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(this.port, this.host, resolve); }); }
     catch (error) { this.#server = null; server.close(); throw error; }

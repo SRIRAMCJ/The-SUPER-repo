@@ -30,6 +30,7 @@ try {
         (record.token !== null && (typeof record.token !== 'string' || !record.token)) ||
         !Number.isSafeInteger(record.epoch) || record.epoch < 1 ||
         !Number.isSafeInteger(record.version) || record.version < 0 ||
+        (record.identity !== undefined && record.identity !== null && (typeof record.identity !== 'string' || !/^[a-f0-9]{64}$/.test(record.identity))) ||
         !Number.isSafeInteger(record.expiresAt) || record.expiresAt < 0 || records.has(record.name)) throw fault('FAILOVER_STORE_CORRUPT');
     records.set(record.name, record);
   }
@@ -38,15 +39,17 @@ try {
     await writeAtomicJson(`${file}.initialized`, { schemaVersion: '0.1.0', initialized: true });
     initialized = true;
   }
-  const { action, name, owner, token, epoch, leaseMs, result } = request;
+  const { action, name, owner, token, epoch, leaseMs, result, identity = null } = request;
   if (typeof name !== 'string' || !name.trim()) throw fault('FAILOVER_NAME_INVALID');
   const now = Date.now();
   const current = records.get(name) ?? null;
   let next = current;
   if (action === 'claim') {
     if (typeof owner !== 'string' || !owner.trim() || !Number.isSafeInteger(leaseMs) || leaseMs < 1000 || !Number.isSafeInteger(now + leaseMs) || current?.epoch === Number.MAX_SAFE_INTEGER) throw fault('FAILOVER_REQUEST_INVALID');
+    if (identity !== null && (typeof identity !== 'string' || !/^[a-f0-9]{64}$/.test(identity))) throw fault('FAILOVER_REQUEST_INVALID');
+    if (current && (current.identity ?? null) !== identity) throw fault('FAILOVER_IDENTITY_CONFLICT');
     if (current?.expiresAt > now) throw fault('FAILOVER_LEASE_HELD');
-    next = { schemaVersion: '0.1.0', name, owner, token: randomUUID(), epoch: (current?.epoch ?? 0) + 1, expiresAt: now + leaseMs, version: current?.version ?? 0, result: current?.result ?? null };
+    next = { schemaVersion: '0.1.0', name, owner, token: randomUUID(), epoch: (current?.epoch ?? 0) + 1, expiresAt: now + leaseMs, version: current?.version ?? 0, result: current?.result ?? null, identity: current?.identity ?? identity };
   } else if (action === 'renew' || action === 'commit' || action === 'release' || action === 'writeEffect') {
     if (!current || !token || current.token !== token || current.epoch !== epoch || current.expiresAt <= now) throw fault('FAILOVER_FENCE_REJECTED');
     if (action === 'renew') {

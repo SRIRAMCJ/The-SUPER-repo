@@ -4,6 +4,14 @@ import { UnixWorkerClient } from './unix-worker-transport.js';
 
 const FINGERPRINT = /^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/;
 const LIMIT = 65_536;
+const MAX_PINS = 16;
+
+function fingerprintSet(values) {
+  if (!Array.isArray(values) || values.length < 1 || values.length > MAX_PINS ||
+      values.some((value) => typeof value !== 'string' || !FINGERPRINT.test(value)) ||
+      new Set(values).size !== values.length) throw new TypeError('Invalid TLS certificate fingerprints');
+  return new Set(values);
+}
 
 // Mutual TLS gateway to the local governed worker. The worker still validates
 // each signed request, policy decision, durable claim, and effect fence.
@@ -14,14 +22,19 @@ export class TlsWorkerBridge {
     maxConnections = 32, maxBytes = LIMIT, timeoutMs = 30_000 } = {}) {
     if (typeof host !== 'string' || !host || !Number.isSafeInteger(port) || port < 0 || port > 65535 ||
         typeof socketPath !== 'string' || !socketPath.startsWith('/') || !key || !cert || !ca ||
-        !Array.isArray(clientFingerprints) || clientFingerprints.length < 1 ||
-        clientFingerprints.some((value) => typeof value !== 'string' || !FINGERPRINT.test(value)) ||
         !Number.isSafeInteger(maxConnections) || maxConnections < 1 ||
         !Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > LIMIT ||
         !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new TypeError('Invalid TLS worker bridge configuration');
-    Object.assign(this, { host, port, socketPath, key, cert, ca, clientFingerprints: new Set(clientFingerprints),
+    this.#clientFingerprints = fingerprintSet(clientFingerprints);
+    Object.assign(this, { host, port, socketPath, key, cert, ca,
       maxConnections, maxBytes, timeoutMs });
   }
+
+  #clientFingerprints;
+
+  // Swap the allowlist for new connections. Existing requests finish under their
+  // authenticated TLS session; stop the bridge to terminate them immediately.
+  rotateClientFingerprints(values) { this.#clientFingerprints = fingerprintSet(values); }
 
   async start() {
     if (this.#server) throw new Error('TLS worker bridge already started');
@@ -43,7 +56,7 @@ export class TlsWorkerBridge {
   address() { return this.#server?.address() ?? null; }
 
   #accept(socket) {
-    if (!socket.authorized || !this.clientFingerprints.has(socket.getPeerCertificate().fingerprint256) ||
+    if (!socket.authorized || !this.#clientFingerprints.has(socket.getPeerCertificate().fingerprint256) ||
         this.#sockets.size >= this.maxConnections * 2) { socket.destroy(); return; }
     const worker = createConnection(this.socketPath);
     this.#sockets.add(socket);
@@ -71,16 +84,19 @@ export class TlsWorkerBridge {
 }
 
 export class TlsWorkerClient {
-  constructor({ host, port, servername, serverFingerprint256, key, cert, ca, nodeId, authenticator,
+  constructor({ host, port, servername, serverFingerprint256, serverFingerprints256, key, cert, ca, nodeId, authenticator,
     timeoutMs = 30_000, maxBytes = LIMIT } = {}) {
     if (typeof host !== 'string' || !host || !Number.isSafeInteger(port) || port < 1 || port > 65535 ||
-        typeof servername !== 'string' || !servername || !FINGERPRINT.test(serverFingerprint256) ||
+        typeof servername !== 'string' || !servername ||
         !key || !cert || !ca) throw new TypeError('Invalid TLS worker client configuration');
+    if (serverFingerprint256 !== undefined && serverFingerprints256 !== undefined)
+      throw new TypeError('Specify one TLS server fingerprint option');
+    const trustedPins = fingerprintSet(serverFingerprints256 ?? [serverFingerprint256]);
     this.client = new UnixWorkerClient({ socketPath: '/tls-worker', nodeId, authenticator, timeoutMs, maxBytes,
       connectSocket: () => connect({ host, port, servername, key, cert, ca, rejectUnauthorized: true,
         minVersion: 'TLSv1.3', checkServerIdentity: (name, peer) => {
           const error = checkServerIdentity(name, peer);
-          return error ?? (peer.fingerprint256 === serverFingerprint256 ? undefined : new Error('TLS worker certificate fingerprint mismatch'));
+          return error ?? (trustedPins.has(peer.fingerprint256) ? undefined : new Error('TLS worker certificate fingerprint mismatch'));
         } }) });
   }
 

@@ -1,0 +1,356 @@
+{
+  "schemaVersion": "0.1.0",
+  "references": [
+    {
+      "name": "OpenAI Agents SDK",
+      "url": "https://github.com/openai/openai-agents-python",
+      "phase": 5,
+      "target": "agent runtime and handoffs",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "LangGraph",
+      "url": "https://github.com/langchain-ai/langgraph",
+      "phase": 5,
+      "target": "durable graph orchestration",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Microsoft Agent Framework",
+      "url": "https://github.com/microsoft/agent-framework",
+      "phase": 5,
+      "target": "cross-provider agent interoperability",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "OpenHands",
+      "url": "https://github.com/All-Hands-AI/OpenHands",
+      "phase": 6,
+      "target": "coding sandbox and artifact workflow",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "SWE-agent",
+      "url": "https://github.com/SWE-agent/SWE-agent",
+      "phase": 6,
+      "target": "issue resolution evaluations",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Aider",
+      "url": "https://github.com/Aider-AI/aider",
+      "phase": 6,
+      "target": "code editing and change verification",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "OpenAI Codex",
+      "url": "https://github.com/openai/codex",
+      "phase": 6,
+      "target": "coding harness adapter",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "browser-use",
+      "url": "https://github.com/browser-use/browser-use",
+      "phase": 6,
+      "target": "browser investigation agent",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Playwright",
+      "url": "https://github.com/microsoft/playwright",
+      "phase": 6,
+      "target": "browser automation adapter",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "GPT Researcher",
+      "url": "https://github.com/assafelovic/gpt-researcher",
+      "phase": 7,
+      "target": "source-grounded research",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Official MCP reference servers",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "phase": 6,
+      "target": "governed MCP connector",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "DeepEval",
+      "url": "https://github.com/confident-ai/deepeval",
+      "phase": 8,
+      "target": "agent evaluation",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Arize Phoenix",
+      "url": "https://github.com/Arize-ai/phoenix",
+      "phase": 3,
+      "target": "trace export and inspection",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Langfuse",
+      "url": "https://github.com/langfuse/langfuse",
+      "phase": 3,
+      "target": "trace and evaluation interoperability",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Agent Reach",
+      "url": "https://github.com/Panniantong/agent-reach",
+      "phase": 6,
+      "target": "permissioned web source connectors",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Superpowers",
+      "url": "https://github.com/obra/superpowers",
+      "phase": 6,
+      "target": "portable skill workflows and language support",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "AI Design Skills",
+      "url": "https://github.com/elayadesign/ai-design-skills",
+      "phase": 8,
+      "target": "evaluated design skills",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "DeepTutor",
+      "url": "https://github.com/HKUDS/DeepTutor",
+      "phase": 8,
+      "target": "education and tutoring domain",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Hallmark",
+      "url": "https://github.com/Nutlope/hallmark",
+      "phase": 8,
+      "target": "design quality evaluation",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Cindy",
+      "url": "https://github.com/makecindy/cindy",
+      "phase": 8,
+      "target": "vertical agent applications",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Jailbreaks",
+      "url": "https://github.com/togg53192-cmd/jailbreaks",
+      "phase": 5,
+      "target": "defensive prompt-injection evaluation corpus",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "LinkSwift",
+      "url": "https://github.com/hmjz100/LinkSwift",
+      "phase": 6,
+      "target": "link extraction and provenance",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Cloudflare Security Audit Skill",
+      "url": "https://github.com/cloudflare/security-audit-skill",
+      "phase": 6,
+      "target": "security review skill",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Claude SEO",
+      "url": "https://github.com/AgriciDaniel/claude-seo",
+      "phase": 8,
+      "target": "SEO domain workflow",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "TradingAgents",
+      "url": "https://github.com/TauricResearch/TradingAgents",
+      "phase": 8,
+      "target": "market research and paper-trading evaluation",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Graphify",
+      "url": "https://github.com/Graphify-Labs/graphify",
+      "phase": 7,
+      "target": "knowledge graph extraction",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    },
+    {
+      "name": "Ruflo",
+      "url": "https://github.com/ruvnet/ruflo",
+      "phase": 5,
+      "target": "harness and multi-agent coordination",
+      "status": "reference",
+      "acceptance": [
+        "license and revision review",
+        "versioned SUPER contract",
+        "permission and resource bounds",
+        "task evaluation and benchmark"
+      ]
+    }
+  ]
+}

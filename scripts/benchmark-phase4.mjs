@@ -45,6 +45,24 @@ async function measure(count, work) {
     p95Ms: +durations[Math.ceil(count * .95) - 1].toFixed(2),
     operationsPerSecond: +(count * 1000 / elapsed).toFixed(1) };
 }
+async function measureConcurrent(count, concurrency, work) {
+  const durations = [];
+  let next = 0;
+  const start = performance.now();
+  await Promise.all(Array.from({ length: Math.min(count, concurrency) }, async () => {
+    while (next < count) {
+      const index = next++;
+      const before = performance.now();
+      await work(index);
+      durations.push(performance.now() - before);
+    }
+  }));
+  const elapsed = performance.now() - start;
+  durations.sort((a, b) => a - b);
+  return { concurrency, medianMs: +durations[Math.floor(count / 2)].toFixed(2),
+    p95Ms: +durations[Math.ceil(count * .95) - 1].toFixed(2),
+    operationsPerSecond: +(count * 1000 / elapsed).toFixed(1) };
+}
 
 try {
   const certs = await certificates();
@@ -68,8 +86,9 @@ try {
   await tls.execute({ requestId: 'warmup-tls', capabilityId: 'echo', input: { value: 1 } });
   const unix = await measure(samples, (index) => direct.execute({ requestId: `unix-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `tls-${index}`, capabilityId: 'echo', input: { value: index } }));
+  const mutualTlsConcurrent = await measureConcurrent(samples, 4, (index) => tls.execute({ requestId: `tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
   process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, samples,
-    unix, mutualTls, note: 'Sequential local loopback control requests with durable nonce, audit, and idempotency writes; not network capacity.' }, null, 2)}\n`);
+    unix, mutualTls, mutualTlsConcurrent, note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; not network capacity.' }, null, 2)}\n`);
 } finally {
   await bridge?.stop();
   await worker?.stop();

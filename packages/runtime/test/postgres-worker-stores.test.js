@@ -14,7 +14,8 @@ test('PostgreSQL worker stores single-flight and audit across two pools', { skip
   const { Pool } = await import('pg');
   const pools = [new Pool({ connectionString: url }), new Pool({ connectionString: url })];
   try {
-    const stores = await Promise.all(pools.map(async (pool) => ({ requests: await new PostgresWorkerIdempotencyStore(pool).init(), audit: await new PostgresWorkerAuditJournal(pool).init() })));
+    const stores = [];
+    for (const pool of pools) stores.push({ requests: await new PostgresWorkerIdempotencyStore(pool).init(), audit: await new PostgresWorkerAuditJournal(pool).init() });
     const key = randomUUID(), fingerprint = 'fingerprint';
     const decisions = await Promise.all(stores.map(({ requests }) => requests.claim(key, fingerprint)));
     assert.deepEqual(decisions.map((d) => d.state).sort(), ['claimed', 'in_progress']);

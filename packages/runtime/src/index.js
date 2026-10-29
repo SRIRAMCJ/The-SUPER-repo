@@ -81,3 +81,4 @@ export { FileRateLimiter } from './file-rate-limiter.js';
 export { RuntimeRequestGuard } from './request-guard.js';
 export { RuntimeRequestIdentity } from './request-identity.js';
 export { RuntimeBearerAuthorizer } from './bearer-authorizer.js';
+export { SqliteCoordinationStore } from './sqlite-coordination.js';

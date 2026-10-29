@@ -30,7 +30,8 @@ async function certificates(directory) {
     read('ca.crt'), read('server.key'), read('server.crt'), read('client.key'), read('client.crt'), read('other.key'), read('other.crt')]);
   return { ca, serverKey, serverCert, clientKey, clientCert, otherKey, otherCert,
     serverFingerprint256: new X509Certificate(serverCert).fingerprint256,
-    clientFingerprint256: new X509Certificate(clientCert).fingerprint256 };
+    clientFingerprint256: new X509Certificate(clientCert).fingerprint256,
+    otherFingerprint256: new X509Certificate(otherCert).fingerprint256 };
 }
 
 test('mutual TLS bridge authenticates certificates and forwards a governed worker request', { timeout: 20_000 }, async () => {
@@ -61,9 +62,25 @@ test('mutual TLS bridge authenticates certificates and forwards a governed worke
     const unlisted = new TlsWorkerClient({ ...common, key: certs.otherKey, cert: certs.otherCert });
     await assert.rejects(unlisted.execute({ capabilityId: 'double', input: { value: 1 } }));
     assert.equal(calls, 1);
+    assert.throws(() => bridge.rotateClientFingerprints([]), /fingerprints/);
+    assert.throws(() => bridge.rotateClientFingerprints([certs.clientFingerprint256, certs.clientFingerprint256]), /fingerprints/);
+    bridge.rotateClientFingerprints([certs.clientFingerprint256, certs.otherFingerprint256]);
+    assert.equal(await unlisted.execute({ requestId: 'tls-2', capabilityId: 'double', input: { value: 3 } }), 6);
+    bridge.rotateClientFingerprints([certs.otherFingerprint256]);
+    await assert.rejects(client.execute({ requestId: 'tls-3', capabilityId: 'double', input: { value: 4 } }));
+    assert.equal(await unlisted.execute({ requestId: 'tls-4', capabilityId: 'double', input: { value: 5 } }), 10);
+    assert.equal(calls, 3);
   } finally {
     await bridge?.stop();
     await worker?.stop();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('TLS pin configuration rejects empty, duplicated, or ambiguous trust sets', () => {
+  const pin = 'AA:'.repeat(31) + 'AA';
+  const config = { host: 'localhost', port: 443, servername: 'localhost', key: 'key', cert: 'cert', ca: 'ca' };
+  assert.throws(() => new TlsWorkerClient({ ...config, serverFingerprints256: [] }), /fingerprints/);
+  assert.throws(() => new TlsWorkerClient({ ...config, serverFingerprints256: [pin, pin] }), /fingerprints/);
+  assert.throws(() => new TlsWorkerClient({ ...config, serverFingerprint256: pin, serverFingerprints256: [pin] }), /one TLS server/);
 });

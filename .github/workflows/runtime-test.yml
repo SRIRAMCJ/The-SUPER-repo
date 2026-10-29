@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  postgres-coordination:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: super_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d super_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install PostgreSQL test driver
+        run: npm install --no-save --ignore-scripts pg@8.23.1
+      - name: Test independent PostgreSQL connections
+        env:
+          SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
+        run: node --test packages/runtime/test/postgres-coordination.test.js
   runtime:
     runs-on: ubuntu-latest
     steps:

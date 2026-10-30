@@ -1,7 +1,7 @@
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { X509Certificate, randomUUID } from 'node:crypto';
+import { X509Certificate, randomUUID, createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +29,23 @@ function measureStore(store, method, label) {
     }
   };
   return store;
+}
+function splitAuditAppend(pool) {
+  return async (event) => {
+    const payload = JSON.stringify(Object.fromEntries(Object.entries(event).sort(([a], [b]) => a.localeCompare(b))));
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1 FOR UPDATE');
+      const sequence = Number(head.sequence) + 1;
+      const hash = createHash('sha256').update(`${head.hash}\n${sequence}\n${payload}`).digest('hex');
+      await client.query('INSERT INTO super_worker_audit VALUES ($1,$2,$3,$4::jsonb)', [sequence, head.hash, hash, payload]);
+      await client.query('UPDATE super_worker_audit_head SET sequence=$1, hash=$2 WHERE id=1', [sequence, hash]);
+      await client.query('COMMIT');
+      return { sequence, hash };
+    } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+    finally { client.release(); }
+  };
 }
 async function run(...args) { await openssl('openssl', args, { cwd: directory }); }
 async function certificates() {
@@ -93,8 +110,12 @@ try {
     await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
   measureStore(idempotencyStore, 'claim', 'idempotencyClaim');
   measureStore(idempotencyStore, 'completeClaim', 'idempotencyComplete');
-  const auditJournal = measureStore(postgresPool ? await new PostgresWorkerAuditJournal(postgresPool).init() :
-    new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 }), 'append', 'auditAppend');
+  const auditMode = process.env.SUPER_BENCHMARK_AUDIT_MODE ?? 'combined';
+  if (!['combined', 'split'].includes(auditMode) || (auditMode === 'split' && !postgresPool)) throw new TypeError('Invalid audit benchmark mode');
+  const auditStore = postgresPool ? await new PostgresWorkerAuditJournal(postgresPool).init() :
+    new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 });
+  if (auditMode === 'split') auditStore.append = splitAuditAppend(postgresPool);
+  const auditJournal = measureStore(auditStore, 'append', 'auditAppend');
   worker = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore, idempotencyStore, auditJournal,
     authorize: () => ({ allowed: true }), handlers: { echo: (input) => input } });
@@ -113,7 +134,7 @@ try {
   const unix = await measure(samples, (index) => direct.execute({ requestId: `${runId}-unix-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `${runId}-tls-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTlsConcurrent = await measureConcurrent(samples, concurrency, (index) => tls.execute({ requestId: `${runId}-tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
-  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', samples,
+  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', auditMode, samples,
     unix, mutualTls, mutualTlsConcurrent,
     storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),
     note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; store averages include lock contention; not network capacity.' }, null, 2)}\n`);

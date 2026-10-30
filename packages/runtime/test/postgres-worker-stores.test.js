@@ -29,12 +29,17 @@ test('PostgreSQL worker stores single-flight and audit across two pools', { skip
     assert.equal(new Set(events.map((e) => e.sequence)).size, 2);
     const replay = await stores[0].audit.replay({ afterSequence: events[0].sequence - 1 });
     assert.ok(replay.events.some((entry) => entry.event.key === key));
-    const sequence = events[0].sequence;
+    const anchor = events.reduce((a, b) => a.sequence < b.sequence ? a : b);
+    const sequence = anchor.sequence;
     const { rows: [saved] } = await pools[0].query('SELECT event FROM super_worker_audit WHERE sequence=$1', [sequence]);
     try {
       await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify({ ...saved.event, type: 'tampered' })]);
       await assert.rejects(stores[1].audit.replay(), { code: 'AUDIT_CORRUPT' });
     } finally { await pools[0].query('UPDATE super_worker_audit SET event=$2::jsonb WHERE sequence=$1', [sequence, JSON.stringify(saved.event)]); }
+    await stores[0].audit.compactThrough(sequence, anchor.hash);
+    await assert.rejects(stores[1].audit.replay({ afterSequence: sequence - 1 }), { code: 'AUDIT_GAP' });
+    const retained = await stores[1].audit.replay({ afterSequence: sequence });
+    assert.ok(retained.events.some((entry) => entry.event.key === key));
   } finally { await Promise.all(pools.map((pool) => pool.end())); }
 });
 

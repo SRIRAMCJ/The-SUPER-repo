@@ -70,7 +70,7 @@ async function explicitClaim(key, fingerprint) {
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }
-async function separateNonceConsume(nonce, expiresAt) {
+async function combinedNonceConsume(nonce, expiresAt) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(nonce) || !Number.isSafeInteger(expiresAt)) throw new TypeError('Invalid nonce or expiry');
     const digest = createHash('sha256').update(nonce).digest('hex');
     return this.transaction(async (client) => {
@@ -80,10 +80,14 @@ async function separateNonceConsume(nonce, expiresAt) {
       const now = Number(time.now);
       if (expiresAt < now) throw Object.assign(new Error('REMOTE_AUTH_EXPIRED'), { code: 'REMOTE_AUTH_EXPIRED' });
       await client.query('DELETE FROM super_nonces WHERE expires_at < $1', [now]);
-      const { rows: [existing] } = await client.query('SELECT 1 FROM super_nonces WHERE digest=$1', [digest]);
-      if (existing) throw Object.assign(new Error('REMOTE_AUTH_REPLAY'), { code: 'REMOTE_AUTH_REPLAY' });
-      const { rows: [capacity] } = await client.query('SELECT count(*)::integer AS count FROM super_nonces');
-      if (capacity.count >= this.maxNonces) throw Object.assign(new Error('REMOTE_AUTH_CAPACITY'), { code: 'REMOTE_AUTH_CAPACITY' });
+      // Both reads share one snapshot after expiry pruning, under the same lock.
+      const { rows: [admission] } = await client.query(`WITH existing AS MATERIALIZED (
+        SELECT EXISTS (SELECT 1 FROM super_nonces WHERE digest=$1) AS replay
+      ) SELECT replay, CASE WHEN replay THEN NULL
+        ELSE (SELECT count(*)::integer FROM super_nonces) END AS count
+        FROM existing`, [digest]);
+      if (admission.replay) throw Object.assign(new Error('REMOTE_AUTH_REPLAY'), { code: 'REMOTE_AUTH_REPLAY' });
+      if (admission.count >= this.maxNonces) throw Object.assign(new Error('REMOTE_AUTH_CAPACITY'), { code: 'REMOTE_AUTH_CAPACITY' });
       await client.query('INSERT INTO super_nonces (digest, expires_at) VALUES ($1, $2)', [digest, expiresAt]);
     });
   }
@@ -144,11 +148,11 @@ try {
   const socketPath = path.join(directory, 'worker.sock');
   const postgresUrl = process.env.SUPER_TEST_POSTGRES_URL;
   if (postgresUrl) { const { Pool } = await import('pg'); postgresPool = new Pool({ connectionString: postgresUrl, max: 8 }); }
-  const nonceMode = process.env.SUPER_BENCHMARK_NONCE_MODE ?? 'combined';
-  if (!['combined', 'separate'].includes(nonceMode) || (nonceMode === 'separate' && !postgresPool)) throw new TypeError('Invalid nonce benchmark mode');
+  const nonceMode = process.env.SUPER_BENCHMARK_NONCE_MODE ?? 'separate';
+  if (!['combined', 'separate'].includes(nonceMode) || (nonceMode === 'combined' && !postgresPool)) throw new TypeError('Invalid nonce benchmark mode');
   const nonceStore = postgresPool ? await new PostgresCoordinationStore(postgresPool).init() :
     new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 });
-  if (nonceMode === 'separate') nonceStore.consume = separateNonceConsume;
+  if (nonceMode === 'combined') nonceStore.consume = combinedNonceConsume;
   measureStore(nonceStore, 'consume', 'nonceConsume');
   const idempotencyStore = postgresPool ? await new PostgresWorkerIdempotencyStore(postgresPool).init() :
     await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();

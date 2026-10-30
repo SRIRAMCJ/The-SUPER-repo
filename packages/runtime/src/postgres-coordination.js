@@ -11,6 +11,7 @@ export class PostgresCoordinationStore {
     if (typeof pool?.connect !== 'function' || !Number.isSafeInteger(maxNonces) || maxNonces < 1 || maxNonces > 1000000) throw new TypeError('Invalid PostgreSQL coordinator');
     this.pool = pool;
     this.maxNonces = maxNonces;
+    this.nonceBuckets = maxNonces < 16 ? 1 : 16;
   }
   async init() {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS super_leases (
@@ -19,23 +20,27 @@ export class PostgresCoordinationStore {
       CREATE TABLE IF NOT EXISTS super_effects (
       name text PRIMARY KEY, value jsonb NOT NULL, epoch bigint NOT NULL);
       CREATE TABLE IF NOT EXISTS super_nonces (
-      digest text PRIMARY KEY, expires_at bigint NOT NULL);`);
+      digest text PRIMARY KEY, expires_at bigint NOT NULL);
+      CREATE INDEX IF NOT EXISTS super_nonces_bucket_idx ON super_nonces ((substring(digest, 1, 1)));`);
     return this;
   }
   async consume(nonce, expiresAt) {
     if (!ID.test(nonce) || !Number.isSafeInteger(expiresAt)) throw new TypeError('Invalid nonce or expiry');
     const digest = createHash('sha256').update(nonce).digest('hex');
+    const bucket = this.nonceBuckets === 1 ? 0 : parseInt(digest[0], 16);
+    const bucketCapacity = Math.floor(this.maxNonces / this.nonceBuckets) + (bucket < this.maxNonces % this.nonceBuckets ? 1 : 0);
     return this.transaction(async (client) => {
-      // Serializes the bounded capacity decision across independent hosts.
-      await client.query("SELECT pg_advisory_xact_lock(845301, 1)");
+      // Each digest belongs to exactly one capacity partition. Serialize only
+      // that partition's replay and capacity decision across hosts.
+      await client.query('SELECT pg_advisory_xact_lock(845301, $1)', [bucket]);
       const { rows: [time] } = await client.query('SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now');
       const now = Number(time.now);
       if (expiresAt < now) throw fault('REMOTE_AUTH_EXPIRED');
-      await client.query('DELETE FROM super_nonces WHERE expires_at < $1', [now]);
+      await client.query('DELETE FROM super_nonces WHERE expires_at < $1 AND ($2::integer = 1 OR substring(digest, 1, 1) = $3)', [now, this.nonceBuckets, digest[0]]);
       const { rows: [existing] } = await client.query('SELECT 1 FROM super_nonces WHERE digest=$1', [digest]);
       if (existing) throw fault('REMOTE_AUTH_REPLAY');
-      const { rows: [capacity] } = await client.query('SELECT count(*)::integer AS count FROM super_nonces');
-      if (capacity.count >= this.maxNonces) throw fault('REMOTE_AUTH_CAPACITY');
+      const { rows: [capacity] } = await client.query('SELECT count(*)::integer AS count FROM super_nonces WHERE $1::integer = 1 OR substring(digest, 1, 1) = $2', [this.nonceBuckets, digest[0]]);
+      if (capacity.count >= bucketCapacity) throw fault('REMOTE_AUTH_CAPACITY');
       await client.query('INSERT INTO super_nonces (digest, expires_at) VALUES ($1, $2)', [digest, expiresAt]);
     });
   }

@@ -38,6 +38,10 @@ jobs:
         env:
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
         run: node scripts/benchmark-phase4.mjs 20
+      - name: Measure PostgreSQL TLS contention at eight clients
+        env:
+          SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
+        run: node scripts/benchmark-phase4.mjs 200 8
   runtime:
     runs-on: ubuntu-latest
     steps:

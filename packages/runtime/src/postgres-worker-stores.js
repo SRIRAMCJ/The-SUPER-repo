@@ -90,8 +90,10 @@ export class PostgresWorkerAuditJournal {
       const sequence = Number(head.sequence) + 1;
       if (!Number.isSafeInteger(sequence)) throw fault('AUDIT_CAPACITY');
       const hash = createHash('sha256').update(`${head.hash}\n${sequence}\n${payload}`).digest('hex');
-      await client.query('INSERT INTO super_worker_audit VALUES ($1,$2,$3,$4::jsonb)', [sequence, head.hash, hash, payload]);
-      await client.query('UPDATE super_worker_audit_head SET sequence=$1, hash=$2 WHERE id=1', [sequence, hash]);
+      await client.query(`WITH inserted AS (
+        INSERT INTO super_worker_audit VALUES ($1,$2,$3,$4::jsonb) RETURNING sequence, hash
+      ) UPDATE super_worker_audit_head AS h SET sequence=inserted.sequence, hash=inserted.hash
+        FROM inserted WHERE h.id=1`, [sequence, head.hash, hash, payload]);
       await client.query('COMMIT');
       return { sequence, hash };
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }

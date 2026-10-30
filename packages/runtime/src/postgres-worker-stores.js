@@ -21,21 +21,22 @@ export class PostgresWorkerIdempotencyStore {
   async claim(key, fingerprint) {
     if (typeof key !== 'string' || !key || key.length > 4096 || typeof fingerprint !== 'string' || !fingerprint) throw new TypeError('Invalid request identity');
     const client = await this.pool.connect();
+    let transaction = false;
     try {
-      await client.query('BEGIN');
       const token = randomUUID();
+      // One statement is committed before query resolution; never acknowledge an
+      // uncommitted claim. On an uncertain connection failure, retry the same key.
       const inserted = await client.query(`INSERT INTO super_worker_requests VALUES ($1,$2,$3,'pending',NULL,clock_timestamp()+($4::bigint * interval '1 millisecond')) ON CONFLICT DO NOTHING RETURNING claim_token, expires_at`, [key, fingerprint, token, this.ttlMs]);
-      let state, record;
-      if (inserted.rowCount) { state = 'claimed'; record = { claimToken: token, fingerprint, status: 'pending' }; }
-      else {
-        const { rows: [current] } = await client.query(`SELECT fingerprint, claim_token, status, response, expires_at <= clock_timestamp() AS expired FROM super_worker_requests WHERE key=$1 FOR UPDATE`, [key]);
-        if (!current) throw fault('REMOTE_CLAIM_INVALID');
-        state = current.fingerprint !== fingerprint ? 'conflict' : current.status === 'completed' ? 'replay' : current.expired ? 'recovery_required' : 'in_progress';
-        record = { claimToken: current.claim_token, fingerprint: current.fingerprint, status: current.status, response: current.response };
-      }
+      if (inserted.rowCount) return { state: 'claimed', record: { claimToken: token, fingerprint, status: 'pending' } };
+      await client.query('BEGIN');
+      transaction = true;
+      const { rows: [current] } = await client.query(`SELECT fingerprint, claim_token, status, response, expires_at <= clock_timestamp() AS expired FROM super_worker_requests WHERE key=$1 FOR UPDATE`, [key]);
+      if (!current) throw fault('REMOTE_CLAIM_INVALID');
+      const state = current.fingerprint !== fingerprint ? 'conflict' : current.status === 'completed' ? 'replay' : current.expired ? 'recovery_required' : 'in_progress';
+      const record = { claimToken: current.claim_token, fingerprint: current.fingerprint, status: current.status, response: current.response };
       await client.query('COMMIT');
       return { state, record };
-    } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+    } catch (error) { if (transaction) await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }
   async completeClaim(key, fingerprint, claimToken, response) {

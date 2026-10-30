@@ -70,6 +70,23 @@ async function explicitClaim(key, fingerprint) {
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }
+async function separateNonceConsume(nonce, expiresAt) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(nonce) || !Number.isSafeInteger(expiresAt)) throw new TypeError('Invalid nonce or expiry');
+    const digest = createHash('sha256').update(nonce).digest('hex');
+    return this.transaction(async (client) => {
+      // Serializes the bounded capacity decision across independent hosts.
+      await client.query("SELECT pg_advisory_xact_lock(845301, 1)");
+      const { rows: [time] } = await client.query('SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now');
+      const now = Number(time.now);
+      if (expiresAt < now) throw Object.assign(new Error('REMOTE_AUTH_EXPIRED'), { code: 'REMOTE_AUTH_EXPIRED' });
+      await client.query('DELETE FROM super_nonces WHERE expires_at < $1', [now]);
+      const { rows: [existing] } = await client.query('SELECT 1 FROM super_nonces WHERE digest=$1', [digest]);
+      if (existing) throw Object.assign(new Error('REMOTE_AUTH_REPLAY'), { code: 'REMOTE_AUTH_REPLAY' });
+      const { rows: [capacity] } = await client.query('SELECT count(*)::integer AS count FROM super_nonces');
+      if (capacity.count >= this.maxNonces) throw Object.assign(new Error('REMOTE_AUTH_CAPACITY'), { code: 'REMOTE_AUTH_CAPACITY' });
+      await client.query('INSERT INTO super_nonces (digest, expires_at) VALUES ($1, $2)', [digest, expiresAt]);
+    });
+  }
 async function run(...args) { await openssl('openssl', args, { cwd: directory }); }
 async function certificates() {
   await run('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=Benchmark CA', '-keyout', 'ca.key', '-out', 'ca.crt');
@@ -127,8 +144,12 @@ try {
   const socketPath = path.join(directory, 'worker.sock');
   const postgresUrl = process.env.SUPER_TEST_POSTGRES_URL;
   if (postgresUrl) { const { Pool } = await import('pg'); postgresPool = new Pool({ connectionString: postgresUrl, max: 8 }); }
-  const nonceStore = measureStore(postgresPool ? await new PostgresCoordinationStore(postgresPool).init() :
-    new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }), 'consume', 'nonceConsume');
+  const nonceMode = process.env.SUPER_BENCHMARK_NONCE_MODE ?? 'combined';
+  if (!['combined', 'separate'].includes(nonceMode) || (nonceMode === 'separate' && !postgresPool)) throw new TypeError('Invalid nonce benchmark mode');
+  const nonceStore = postgresPool ? await new PostgresCoordinationStore(postgresPool).init() :
+    new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 });
+  if (nonceMode === 'separate') nonceStore.consume = separateNonceConsume;
+  measureStore(nonceStore, 'consume', 'nonceConsume');
   const idempotencyStore = postgresPool ? await new PostgresWorkerIdempotencyStore(postgresPool).init() :
     await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
   const claimMode = process.env.SUPER_BENCHMARK_CLAIM_MODE ?? 'implicit';
@@ -160,7 +181,7 @@ try {
   const unix = await measure(samples, (index) => direct.execute({ requestId: `${runId}-unix-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `${runId}-tls-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTlsConcurrent = await measureConcurrent(samples, concurrency, (index) => tls.execute({ requestId: `${runId}-tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
-  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', auditMode, claimMode, samples,
+  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', auditMode, claimMode, nonceMode, samples,
     unix, mutualTls, mutualTlsConcurrent,
     storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),
     note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; store averages include lock contention; not network capacity.' }, null, 2)}\n`);

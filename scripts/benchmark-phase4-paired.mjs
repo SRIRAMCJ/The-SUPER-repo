@@ -24,4 +24,4 @@ const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length
 process.stdout.write(`${JSON.stringify({ node: process.version, pairs, samplesPerRoute: samples, concurrency: 8,
   medianPairedP95DifferenceMs: median(results.map((item) => item.p95DifferenceMs)),
   medianPairedThroughputDifference: median(results.map((item) => item.throughputDifference)), results,
-  note: 'Positive differences favor the combined audit statement. Alternating paired runs on one CI service; no production SLO.' }, null, 2)}\n`);
+  note: 'Negative p95 differences and positive throughput differences favor the combined audit statement. Alternating paired runs on one CI service; no production SLO.' }, null, 2)}\n`);

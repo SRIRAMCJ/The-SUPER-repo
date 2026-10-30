@@ -65,11 +65,16 @@ export class PostgresWorkerIdempotencyStore {
 }
 
 export class PostgresWorkerAuditJournal {
-  constructor(pool) { if (typeof pool?.connect !== 'function') throw new TypeError('Invalid PostgreSQL audit journal'); this.pool = pool; }
+  constructor(pool, { maxRecords = 10000 } = {}) {
+    if (typeof pool?.connect !== 'function' || !Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > 1000000) throw new TypeError('Invalid PostgreSQL audit journal');
+    this.pool = pool; this.maxRecords = maxRecords;
+  }
   async init() {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS super_worker_audit_head (id integer PRIMARY KEY, sequence bigint NOT NULL, hash text NOT NULL);
       CREATE TABLE IF NOT EXISTS super_worker_audit (sequence bigint PRIMARY KEY, previous_hash text NOT NULL, hash text NOT NULL, event jsonb NOT NULL);
-      INSERT INTO super_worker_audit_head VALUES (1, 0, '${ZERO}') ON CONFLICT DO NOTHING;`);
+      CREATE TABLE IF NOT EXISTS super_worker_audit_base (id integer PRIMARY KEY, sequence bigint NOT NULL, hash text NOT NULL);
+      INSERT INTO super_worker_audit_head VALUES (1, 0, '${ZERO}') ON CONFLICT DO NOTHING;
+      INSERT INTO super_worker_audit_base VALUES (1, 0, '${ZERO}') ON CONFLICT DO NOTHING;`);
     return this;
   }
   async append(event) {
@@ -80,6 +85,8 @@ export class PostgresWorkerAuditJournal {
     try {
       await client.query('BEGIN');
       const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1 FOR UPDATE');
+      const { rows: [base] } = await client.query('SELECT sequence FROM super_worker_audit_base WHERE id=1');
+      if (Number(head.sequence) - Number(base.sequence) >= this.maxRecords) throw fault('AUDIT_CAPACITY');
       const sequence = Number(head.sequence) + 1;
       if (!Number.isSafeInteger(sequence)) throw fault('AUDIT_CAPACITY');
       const hash = createHash('sha256').update(`${head.hash}\n${sequence}\n${payload}`).digest('hex');
@@ -96,8 +103,10 @@ export class PostgresWorkerAuditJournal {
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1');
-      const { rows } = await client.query('SELECT sequence, previous_hash, hash, event FROM super_worker_audit ORDER BY sequence');
-      let previous = ZERO, sequence = 0;
+      const { rows: [base] } = await client.query('SELECT sequence, hash FROM super_worker_audit_base WHERE id=1');
+      if (afterSequence < Number(base.sequence)) throw fault('AUDIT_GAP');
+      const { rows } = await client.query('SELECT sequence, previous_hash, hash, event FROM super_worker_audit WHERE sequence > $1 ORDER BY sequence', [base.sequence]);
+      let previous = base.hash, sequence = Number(base.sequence);
       const events = [];
       for (const row of rows) {
         sequence++;
@@ -110,6 +119,31 @@ export class PostgresWorkerAuditJournal {
       if (sequence !== Number(head.sequence) || previous !== head.hash || afterSequence > sequence) throw fault('AUDIT_CORRUPT');
       await client.query('COMMIT');
       return { events, head: { sequence, hash: previous } };
+    } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+    finally { client.release(); }
+  }
+  async compactThrough(sequence, expectedHash) {
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || !/^[a-f0-9]{64}$/.test(expectedHash)) throw new TypeError('Invalid audit retention anchor');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1 FOR UPDATE');
+      const { rows: [base] } = await client.query('SELECT sequence, hash FROM super_worker_audit_base WHERE id=1 FOR UPDATE');
+      if (sequence < Number(base.sequence) || sequence > Number(head.sequence)) throw fault('AUDIT_CURSOR_INVALID');
+      let previous = base.hash, cursor = Number(base.sequence);
+      const { rows } = await client.query('SELECT sequence, previous_hash, hash, event FROM super_worker_audit WHERE sequence > $1 ORDER BY sequence', [base.sequence]);
+      for (const row of rows) {
+        cursor++;
+        const payload = JSON.stringify(canonical(row.event));
+        if (Number(row.sequence) !== cursor || row.previous_hash !== previous || row.hash !== createHash('sha256').update(`${previous}\n${cursor}\n${payload}`).digest('hex')) throw fault('AUDIT_CORRUPT');
+        previous = row.hash;
+        if (cursor === sequence && previous !== expectedHash) throw fault('AUDIT_CURSOR_INVALID');
+      }
+      if (cursor !== Number(head.sequence) || previous !== head.hash || (sequence === Number(base.sequence) && base.hash !== expectedHash)) throw fault('AUDIT_CORRUPT');
+      await client.query('UPDATE super_worker_audit_base SET sequence=$1, hash=$2 WHERE id=1', [sequence, expectedHash]);
+      await client.query('DELETE FROM super_worker_audit WHERE sequence <= $1', [sequence]);
+      await client.query('COMMIT');
+      return { sequence, hash: expectedHash };
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }

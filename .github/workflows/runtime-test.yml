@@ -34,6 +34,10 @@ jobs:
         env:
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
         run: node --test packages/runtime/test/postgres-coordination.test.js packages/runtime/test/postgres-worker-stores.test.js
+      - name: Measure PostgreSQL governed TLS dispatch
+        env:
+          SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
+        run: node scripts/benchmark-phase4.mjs 20
   runtime:
     runs-on: ubuntu-latest
     steps:

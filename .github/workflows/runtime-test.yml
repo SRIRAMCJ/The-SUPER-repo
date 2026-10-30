@@ -33,7 +33,7 @@ jobs:
       - name: Test independent PostgreSQL connections
         env:
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
-        run: node --test packages/runtime/test/postgres-coordination.test.js packages/runtime/test/postgres-worker-stores.test.js
+        run: node --test --test-concurrency=1 packages/runtime/test/postgres-coordination.test.js packages/runtime/test/postgres-worker-stores.test.js packages/runtime/test/postgres-worker-crash.test.js
       - name: Measure PostgreSQL governed TLS dispatch
         env:
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test

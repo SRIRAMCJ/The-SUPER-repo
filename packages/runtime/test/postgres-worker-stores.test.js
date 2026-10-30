@@ -97,6 +97,22 @@ test('PostgreSQL claim commits before acknowledgement and stays single-flight un
     // A separate session must see a committed row before the claimant returns.
     const { rows: [row] } = await pools[1].query('SELECT claim_token FROM super_worker_requests WHERE key=$1', [key]);
     assert.equal(row.claim_token, token);
+    const uncertainKey = randomUUID();
+    const uncertainStore = new PostgresWorkerIdempotencyStore({
+      async connect() {
+        const client = await pools[0].connect();
+        return {
+          async query(sql, params) {
+            const result = await client.query(sql, params);
+            if (sql.startsWith('INSERT INTO super_worker_requests')) throw new Error('simulated lost acknowledgement');
+            return result;
+          },
+          release() { client.release(); }
+        };
+      }
+    });
+    await assert.rejects(uncertainStore.claim(uncertainKey, 'same'), /lost acknowledgement/);
+    assert.equal((await stores[1].claim(uncertainKey, 'same')).state, 'in_progress');
     await pools[0].end();
     const replacement = await new PostgresWorkerIdempotencyStore(pools[1]).init();
     assert.equal((await replacement.claim(key, 'same')).state, 'in_progress');

@@ -59,6 +59,31 @@ jobs:
           SUPER_BENCHMARK_COMPARE: claim
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
         run: node scripts/benchmark-phase4-paired.mjs 5 100
+  postgres-nonce-benchmark:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: super_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d super_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install PostgreSQL test driver
+        run: npm install --no-save --ignore-scripts pg@8.23.1
+      - name: Compare nonce admission methods in paired trials
+        env:
+          SUPER_BENCHMARK_COMPARE: nonce
+          SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
+        run: node scripts/benchmark-phase4-paired.mjs 5 100
   postgres-coordination:
     runs-on: ubuntu-latest
     services:

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { PostgresCoordinationStore } from '../src/postgres-coordination.js';
 import { RemoteWorkerAuthenticator } from '../src/remote-worker-auth.js';
 
@@ -24,6 +25,37 @@ test('PostgreSQL fences effects across independent pools', { skip: !url }, async
     assert.deepEqual(await first.readEffect(name), { value: { value: 3 }, epoch: 2 });
     await assert.rejects(first.claim(name, 'host-3', 1000, 'b'.repeat(64)), { code: 'COORDINATOR_IDENTITY_CONFLICT' });
   } finally { await firstPool.end(); await secondPool.end(); }
+});
+
+test('partitioned nonce capacity rejects full bucket and admits independent bucket', { skip: !url }, async () => {
+  const { Pool } = await import('pg');
+  const admin = new Pool({ connectionString: url });
+  const schema = `nonce_${randomUUID().replaceAll('-', '')}`;
+  let pools = [];
+  try {
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    pools = [0, 1].map(() => new Pool({ connectionString: url, options: `-c search_path=${schema}` }));
+    const stores = [];
+    for (const pool of pools) stores.push(await new PostgresCoordinationStore(pool, { maxNonces: 16 }).init());
+    const first = randomUUID();
+    const bucket = (nonce) => createHash('sha256').update(nonce).digest('hex')[0];
+    let same, other;
+    for (let i = 0; i < 200 && (!same || !other); i++) {
+      const candidate = randomUUID();
+      if (bucket(candidate) === bucket(first)) same ??= candidate;
+      else other ??= candidate;
+    }
+    assert.ok(same && other);
+    const expiry = Date.now() + 30000;
+    await stores[0].consume(first, expiry);
+    await assert.rejects(stores[1].consume(same, expiry), { code: 'REMOTE_AUTH_CAPACITY' });
+    await assert.rejects(stores[1].consume(first, expiry), { code: 'REMOTE_AUTH_REPLAY' });
+    await stores[1].consume(other, expiry);
+  } finally {
+    await Promise.all(pools.map((pool) => pool.end()));
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin.end();
+  }
 });
 
 test('PostgreSQL nonce ledger rejects concurrent replay across independent pools', { skip: !url }, async () => {

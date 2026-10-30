@@ -33,9 +33,11 @@ export class PostgresCoordinationStore {
       if (expiresAt < now) throw fault('REMOTE_AUTH_EXPIRED');
       await client.query('DELETE FROM super_nonces WHERE expires_at < $1', [now]);
       // Both reads share one snapshot after expiry pruning, under the same lock.
-      const { rows: [admission] } = await client.query(`SELECT
-        EXISTS (SELECT 1 FROM super_nonces WHERE digest=$1) AS replay,
-        (SELECT count(*)::integer FROM super_nonces) AS count`, [digest]);
+      const { rows: [admission] } = await client.query(`WITH existing AS MATERIALIZED (
+        SELECT EXISTS (SELECT 1 FROM super_nonces WHERE digest=$1) AS replay
+      ) SELECT replay, CASE WHEN replay THEN NULL
+        ELSE (SELECT count(*)::integer FROM super_nonces) END AS count
+        FROM existing`, [digest]);
       if (admission.replay) throw fault('REMOTE_AUTH_REPLAY');
       if (admission.count >= this.maxNonces) throw fault('REMOTE_AUTH_CAPACITY');
       await client.query('INSERT INTO super_nonces (digest, expires_at) VALUES ($1, $2)', [digest, expiresAt]);

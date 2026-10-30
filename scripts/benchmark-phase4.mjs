@@ -50,6 +50,26 @@ function splitAuditAppend(pool, maxRecords) {
     finally { client.release(); }
   };
 }
+async function explicitClaim(key, fingerprint) {
+    if (typeof key !== 'string' || !key || key.length > 4096 || typeof fingerprint !== 'string' || !fingerprint) throw new TypeError('Invalid request identity');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const token = randomUUID();
+      const inserted = await client.query(`INSERT INTO super_worker_requests VALUES ($1,$2,$3,'pending',NULL,clock_timestamp()+($4::bigint * interval '1 millisecond')) ON CONFLICT DO NOTHING RETURNING claim_token, expires_at`, [key, fingerprint, token, this.ttlMs]);
+      let state, record;
+      if (inserted.rowCount) { state = 'claimed'; record = { claimToken: token, fingerprint, status: 'pending' }; }
+      else {
+        const { rows: [current] } = await client.query(`SELECT fingerprint, claim_token, status, response, expires_at <= clock_timestamp() AS expired FROM super_worker_requests WHERE key=$1 FOR UPDATE`, [key]);
+        if (!current) throw Object.assign(new Error('REMOTE_CLAIM_INVALID'), { code: 'REMOTE_CLAIM_INVALID' });
+        state = current.fingerprint !== fingerprint ? 'conflict' : current.status === 'completed' ? 'replay' : current.expired ? 'recovery_required' : 'in_progress';
+        record = { claimToken: current.claim_token, fingerprint: current.fingerprint, status: current.status, response: current.response };
+      }
+      await client.query('COMMIT');
+      return { state, record };
+    } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+    finally { client.release(); }
+  }
 async function run(...args) { await openssl('openssl', args, { cwd: directory }); }
 async function certificates() {
   await run('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=Benchmark CA', '-keyout', 'ca.key', '-out', 'ca.crt');
@@ -111,6 +131,9 @@ try {
     new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }), 'consume', 'nonceConsume');
   const idempotencyStore = postgresPool ? await new PostgresWorkerIdempotencyStore(postgresPool).init() :
     await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
+  const claimMode = process.env.SUPER_BENCHMARK_CLAIM_MODE ?? 'implicit';
+  if (!['implicit', 'explicit'].includes(claimMode) || (claimMode === 'explicit' && !postgresPool)) throw new TypeError('Invalid claim benchmark mode');
+  if (claimMode === 'explicit') idempotencyStore.claim = explicitClaim;
   measureStore(idempotencyStore, 'claim', 'idempotencyClaim');
   measureStore(idempotencyStore, 'completeClaim', 'idempotencyComplete');
   const auditMode = process.env.SUPER_BENCHMARK_AUDIT_MODE ?? 'combined';
@@ -137,7 +160,7 @@ try {
   const unix = await measure(samples, (index) => direct.execute({ requestId: `${runId}-unix-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `${runId}-tls-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTlsConcurrent = await measureConcurrent(samples, concurrency, (index) => tls.execute({ requestId: `${runId}-tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
-  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', auditMode, samples,
+  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', auditMode, claimMode, samples,
     unix, mutualTls, mutualTlsConcurrent,
     storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),
     note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; store averages include lock contention; not network capacity.' }, null, 2)}\n`);

@@ -80,3 +80,30 @@ test('governed Unix worker dispatch uses PostgreSQL nonce, audit, and idempotenc
     assert.equal(calls, 1);
   } finally { await server?.stop(); await pool.end(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('PostgreSQL claim commits before acknowledgement and stays single-flight under contention', { skip: !url }, async () => {
+  const { Pool } = await import('pg');
+  const pools = [new Pool({ connectionString: url, max: 8 }), new Pool({ connectionString: url, max: 8 })];
+  try {
+    const stores = [];
+    for (const pool of pools) stores.push(await new PostgresWorkerIdempotencyStore(pool).init());
+    const key = randomUUID();
+    const results = await Promise.all(Array.from({ length: 32 }, (_, i) => stores[i % 2].claim(key, 'same')));
+    const winners = results.filter((result) => result.state === 'claimed');
+    assert.equal(winners.length, 1);
+    assert.equal(results.filter((result) => result.state === 'in_progress').length, 31);
+    const token = winners[0].record.claimToken;
+    assert.ok(results.every((result) => result.record.claimToken === token));
+    // A separate session must see a committed row before the claimant returns.
+    const { rows: [row] } = await pools[1].query('SELECT claim_token FROM super_worker_requests WHERE key=$1', [key]);
+    assert.equal(row.claim_token, token);
+    await pools[0].end();
+    const replacement = await new PostgresWorkerIdempotencyStore(pools[1]).init();
+    assert.equal((await replacement.claim(key, 'same')).state, 'in_progress');
+    assert.equal((await replacement.claim(key, 'different')).state, 'conflict');
+    assert.equal(await replacement.completeClaim(key, 'same', token, { committed: true }), true);
+    assert.deepEqual((await replacement.claim(key, 'same')).record.response, { committed: true });
+  } finally {
+    await Promise.all(pools.map((pool) => pool.ended ? undefined : pool.end()));
+  }
+});

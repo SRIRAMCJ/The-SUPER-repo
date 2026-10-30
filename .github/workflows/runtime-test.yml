@@ -46,6 +46,10 @@ jobs:
         env:
           SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
         run: node scripts/benchmark-phase4-repeated.mjs 5 200 8
+      - name: Compare audit append methods in paired trials
+        env:
+          SUPER_TEST_POSTGRES_URL: postgres://postgres:test-only@localhost:5432/super_test
+        run: node scripts/benchmark-phase4-paired.mjs 5 100
   runtime:
     runs-on: ubuntu-latest
     steps:

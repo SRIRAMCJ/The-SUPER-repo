@@ -7,16 +7,16 @@ const pairs = Number(process.argv[2] ?? 5);
 const samples = Number(process.argv[3] ?? 100);
 if (!Number.isSafeInteger(pairs) || pairs < 3 || pairs > 8 || !Number.isSafeInteger(samples) || samples < 20 || samples > 200) throw new TypeError('Invalid paired benchmark arguments');
 const comparison = process.env.SUPER_BENCHMARK_COMPARE ?? 'audit';
-if (!['audit', 'claim'].includes(comparison)) throw new TypeError('Invalid comparison');
-const [baseline, candidate] = comparison === 'claim' ? ['explicit', 'implicit'] : ['split', 'combined'];
-const modeKey = comparison === 'claim' ? 'claimMode' : 'auditMode';
+if (!['audit', 'claim', 'nonce'].includes(comparison)) throw new TypeError('Invalid comparison');
+const [baseline, candidate] = comparison === 'claim' ? ['explicit', 'implicit'] : comparison === 'nonce' ? ['separate', 'combined'] : ['split', 'combined'];
+const modeKey = comparison === 'claim' ? 'claimMode' : comparison === 'nonce' ? 'nonceMode' : 'auditMode';
 const results = [];
 for (let index = 0; index < pairs; index++) {
   const order = index % 2 ? [candidate, baseline] : [baseline, candidate];
   const pair = {};
   for (const mode of order) {
     const { stdout } = await run(process.execPath, [new URL('./benchmark-phase4.mjs', import.meta.url).pathname, String(samples), '8'],
-      { env: { ...process.env, SUPER_BENCHMARK_AUDIT_MODE: comparison === 'audit' ? mode : 'combined', SUPER_BENCHMARK_CLAIM_MODE: comparison === 'claim' ? mode : 'implicit' }, maxBuffer: 1000000, timeout: 120000 });
+      { env: { ...process.env, SUPER_BENCHMARK_NONCE_MODE: comparison === 'nonce' ? mode : 'combined', SUPER_BENCHMARK_AUDIT_MODE: comparison === 'audit' ? mode : 'combined', SUPER_BENCHMARK_CLAIM_MODE: comparison === 'claim' ? mode : 'implicit' }, maxBuffer: 1000000, timeout: 120000 });
     const result = JSON.parse(stdout);
     if (result[modeKey] !== mode || result.samples !== samples || result.storage !== 'postgresql') throw new Error('Benchmark mode mismatch');
     pair[mode] = { p95Ms: result.mutualTlsConcurrent.p95Ms, throughput: result.mutualTlsConcurrent.operationsPerSecond };

@@ -1,7 +1,7 @@
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,8 @@ import { PostgresCoordinationStore, PostgresWorkerIdempotencyStore, PostgresWork
 
 const samples = Number(process.argv[2] ?? 30);
 if (!Number.isSafeInteger(samples) || samples < 20 || samples > 200) throw new TypeError('samples must be 20–200');
+const concurrency = Number(process.argv[3] ?? 4);
+if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new TypeError('concurrency must be 1–16');
 const directory = await mkdtemp(path.join(os.tmpdir(), 'super-phase4-benchmark-'));
 const openssl = promisify(execFile);
 let worker, bridge, postgresPool;
@@ -101,15 +103,16 @@ try {
     cert: certs.serverCert, ca: certs.ca, clientFingerprints: [certs.clientFingerprint256] });
   await bridge.start();
   const authenticator = new RemoteWorkerAuthenticator({ key });
+  const runId = randomUUID();
   const direct = new UnixWorkerClient({ socketPath, nodeId: 'node-1', authenticator });
   const tls = new TlsWorkerClient({ host: '127.0.0.1', port: bridge.address().port, servername: 'localhost',
     serverFingerprint256: certs.serverFingerprint256, key: certs.clientKey, cert: certs.clientCert,
     ca: certs.ca, nodeId: 'node-1', authenticator });
-  await direct.execute({ requestId: 'warmup-unix', capabilityId: 'echo', input: { value: 1 } });
-  await tls.execute({ requestId: 'warmup-tls', capabilityId: 'echo', input: { value: 1 } });
-  const unix = await measure(samples, (index) => direct.execute({ requestId: `unix-${index}`, capabilityId: 'echo', input: { value: index } }));
-  const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `tls-${index}`, capabilityId: 'echo', input: { value: index } }));
-  const mutualTlsConcurrent = await measureConcurrent(samples, 4, (index) => tls.execute({ requestId: `tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
+  await direct.execute({ requestId: `${runId}-warmup-unix`, capabilityId: 'echo', input: { value: 1 } });
+  await tls.execute({ requestId: `${runId}-warmup-tls`, capabilityId: 'echo', input: { value: 1 } });
+  const unix = await measure(samples, (index) => direct.execute({ requestId: `${runId}-unix-${index}`, capabilityId: 'echo', input: { value: index } }));
+  const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `${runId}-tls-${index}`, capabilityId: 'echo', input: { value: index } }));
+  const mutualTlsConcurrent = await measureConcurrent(samples, concurrency, (index) => tls.execute({ requestId: `${runId}-tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
   process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', samples,
     unix, mutualTls, mutualTlsConcurrent,
     storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),

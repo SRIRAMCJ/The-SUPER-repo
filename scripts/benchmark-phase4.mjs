@@ -7,12 +7,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { RemoteWorkerAuthenticator, FileRemoteNonceStore, DurableIdempotencyStore, FileEventJournal,
   UnixWorkerServer, UnixWorkerClient, TlsWorkerBridge, TlsWorkerClient } from '../packages/runtime/src/index.js';
+import { PostgresCoordinationStore, PostgresWorkerIdempotencyStore, PostgresWorkerAuditJournal } from '../packages/runtime/src/index.js';
 
 const samples = Number(process.argv[2] ?? 30);
 if (!Number.isSafeInteger(samples) || samples < 20 || samples > 200) throw new TypeError('samples must be 20–200');
 const directory = await mkdtemp(path.join(os.tmpdir(), 'super-phase4-benchmark-'));
 const openssl = promisify(execFile);
-let worker, bridge;
+let worker, bridge, postgresPool;
 const storeTimings = Object.create(null);
 function measureStore(store, method, label) {
   const original = store[method].bind(store);
@@ -82,11 +83,16 @@ try {
   const certs = await certificates();
   const key = Buffer.alloc(32, 23);
   const socketPath = path.join(directory, 'worker.sock');
-  const nonceStore = measureStore(new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }), 'consume', 'nonceConsume');
-  const idempotencyStore = await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
+  const postgresUrl = process.env.SUPER_TEST_POSTGRES_URL;
+  if (postgresUrl) { const { Pool } = await import('pg'); postgresPool = new Pool({ connectionString: postgresUrl, max: 8 }); }
+  const nonceStore = measureStore(postgresPool ? await new PostgresCoordinationStore(postgresPool).init() :
+    new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json'), maxNonces: samples * 3 + 10 }), 'consume', 'nonceConsume');
+  const idempotencyStore = postgresPool ? await new PostgresWorkerIdempotencyStore(postgresPool).init() :
+    await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl'), maxRecords: samples * 3 + 10 }).init();
   measureStore(idempotencyStore, 'claim', 'idempotencyClaim');
   measureStore(idempotencyStore, 'completeClaim', 'idempotencyComplete');
-  const auditJournal = measureStore(new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 }), 'append', 'auditAppend');
+  const auditJournal = measureStore(postgresPool ? await new PostgresWorkerAuditJournal(postgresPool).init() :
+    new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 }), 'append', 'auditAppend');
   worker = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore, idempotencyStore, auditJournal,
     authorize: () => ({ allowed: true }), handlers: { echo: (input) => input } });
@@ -104,12 +110,13 @@ try {
   const unix = await measure(samples, (index) => direct.execute({ requestId: `unix-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTls = await measure(samples, (index) => tls.execute({ requestId: `tls-${index}`, capabilityId: 'echo', input: { value: index } }));
   const mutualTlsConcurrent = await measureConcurrent(samples, 4, (index) => tls.execute({ requestId: `tls-concurrent-${index}`, capabilityId: 'echo', input: { value: index } }));
-  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, samples,
+  process.stdout.write(`${JSON.stringify({ platform: process.platform, node: process.version, storage: postgresPool ? 'postgresql' : 'local-files', samples,
     unix, mutualTls, mutualTlsConcurrent,
     storeAverageMs: Object.fromEntries(Object.entries(storeTimings).map(([name, item]) => [name, +(item.totalMs / item.count).toFixed(2)])),
     note: 'Local loopback control requests with durable nonce, audit, and idempotency writes; store averages include lock contention; not network capacity.' }, null, 2)}\n`);
 } finally {
   await bridge?.stop();
   await worker?.stop();
+  await postgresPool?.end();
   await rm(directory, { recursive: true, force: true });
 }

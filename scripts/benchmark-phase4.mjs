@@ -30,14 +30,17 @@ function measureStore(store, method, label) {
   };
   return store;
 }
-function splitAuditAppend(pool) {
+function splitAuditAppend(pool, maxRecords) {
   return async (event) => {
     const payload = JSON.stringify(Object.fromEntries(Object.entries(event).sort(([a], [b]) => a.localeCompare(b))));
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows: [head] } = await client.query('SELECT sequence, hash FROM super_worker_audit_head WHERE id=1 FOR UPDATE');
+      const { rows: [base] } = await client.query('SELECT sequence FROM super_worker_audit_base WHERE id=1');
+      if (Number(head.sequence) - Number(base.sequence) >= maxRecords) throw Object.assign(new Error('AUDIT_CAPACITY'), { code: 'AUDIT_CAPACITY' });
       const sequence = Number(head.sequence) + 1;
+      if (!Number.isSafeInteger(sequence)) throw Object.assign(new Error('AUDIT_CAPACITY'), { code: 'AUDIT_CAPACITY' });
       const hash = createHash('sha256').update(`${head.hash}\n${sequence}\n${payload}`).digest('hex');
       await client.query('INSERT INTO super_worker_audit VALUES ($1,$2,$3,$4::jsonb)', [sequence, head.hash, hash, payload]);
       await client.query('UPDATE super_worker_audit_head SET sequence=$1, hash=$2 WHERE id=1', [sequence, hash]);
@@ -114,7 +117,7 @@ try {
   if (!['combined', 'split'].includes(auditMode) || (auditMode === 'split' && !postgresPool)) throw new TypeError('Invalid audit benchmark mode');
   const auditStore = postgresPool ? await new PostgresWorkerAuditJournal(postgresPool).init() :
     new FileEventJournal(path.join(directory, 'audit'), { maxRecords: samples * 6 + 10 });
-  if (auditMode === 'split') auditStore.append = splitAuditAppend(postgresPool);
+  if (auditMode === 'split') auditStore.append = splitAuditAppend(postgresPool, auditStore.maxRecords);
   const auditJournal = measureStore(auditStore, 'append', 'auditAppend');
   worker = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
     nonceStore, idempotencyStore, auditJournal,

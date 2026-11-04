@@ -127,6 +127,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Validate cross-host harness syntax
+        run: node --check scripts/verify-phase4-hosts.mjs
       - name: Run core tests
         run: npm run test:core
       - name: Run runtime tests

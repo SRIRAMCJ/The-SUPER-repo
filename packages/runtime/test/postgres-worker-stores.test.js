@@ -55,6 +55,15 @@ test('expired PostgreSQL claims require token-bound operator reconciliation', { 
     assert.equal(await store.reconcileClaim(key, 'fingerprint', 'wrong', { result: 1 }, { reason: 'effect verified' }), false);
     assert.equal(await store.reconcileClaim(key, 'fingerprint', claim.record.claimToken, { result: 2 }, { reason: 'effect verified' }), true);
     assert.deepEqual((await store.claim(key, 'fingerprint')).record.response, { result: 2 });
+    const { rows: recorded } = await pool.query('SELECT action, reason FROM super_worker_reconciliations WHERE request_key=$1 ORDER BY id', [key]);
+    assert.deepEqual(recorded, [{ action: 'reconcile', reason: 'effect verified' }]);
+    const releasedKey = randomUUID();
+    const release = await store.claim(releasedKey, 'fingerprint');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(await store.releaseClaim(releasedKey, 'fingerprint', 'wrong', 'verified no effect'), false);
+    assert.equal(await store.releaseClaim(releasedKey, 'fingerprint', release.record.claimToken, 'verified no effect'), true);
+    const { rows: releases } = await pool.query('SELECT action, reason FROM super_worker_reconciliations WHERE request_key=$1', [releasedKey]);
+    assert.deepEqual(releases, [{ action: 'release', reason: 'verified no effect' }]);
   } finally { await pool.end(); }
 });
 

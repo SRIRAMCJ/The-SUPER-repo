@@ -132,3 +132,30 @@ test('PostgreSQL claim commits before acknowledgement and stays single-flight un
     await Promise.all(pools.map((pool) => pool.ended ? undefined : pool.end()));
   }
 });
+
+test('lost completion acknowledgement replays the committed response through a second connection', { skip: !url }, async () => {
+  const { Pool } = await import('pg');
+  const pools = [new Pool({ connectionString: url }), new Pool({ connectionString: url })];
+  try {
+    const owner = await new PostgresWorkerIdempotencyStore(pools[0]).init();
+    const observer = await new PostgresWorkerIdempotencyStore(pools[1]).init();
+    const key = randomUUID();
+    const claim = await owner.claim(key, 'same-request');
+    assert.equal(claim.state, 'claimed');
+    const uncertain = new PostgresWorkerIdempotencyStore({
+      connect: () => pools[0].connect(),
+      async query(sql, params) {
+        const result = await pools[0].query(sql, params);
+        if (sql.startsWith('UPDATE super_worker_requests SET status='))
+          throw new Error('simulated lost completion acknowledgement');
+        return result;
+      }
+    });
+    await assert.rejects(uncertain.completeClaim(key, 'same-request', claim.record.claimToken, { result: 42 }),
+      /lost completion acknowledgement/);
+    const replay = await observer.claim(key, 'same-request');
+    assert.equal(replay.state, 'replay');
+    assert.deepEqual(replay.record.response, { result: 42 });
+    assert.equal((await observer.claim(key, 'different-request')).state, 'conflict');
+  } finally { await Promise.all(pools.map((pool) => pool.end())); }
+});

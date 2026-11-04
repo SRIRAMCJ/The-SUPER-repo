@@ -84,3 +84,60 @@ test('TLS pin configuration rejects empty, duplicated, or ambiguous trust sets',
   assert.throws(() => new TlsWorkerClient({ ...config, serverFingerprints256: [pin, pin] }), /fingerprints/);
   assert.throws(() => new TlsWorkerClient({ ...config, serverFingerprint256: pin, serverFingerprints256: [pin] }), /one TLS server/);
 });
+
+test('TLS disconnect during execution preserves the request claim for a stable retry', { timeout: 20_000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'super-tls-disconnect-'));
+  let worker, bridge;
+  let release;
+  try {
+    const certs = await certificates(directory);
+    const socketPath = path.join(directory, 'worker.sock');
+    let started;
+    const entered = new Promise((resolve) => { started = resolve; });
+    const held = new Promise((resolve) => { release = resolve; });
+    let calls = 0;
+    worker = new UnixWorkerServer({ socketPath, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }),
+      nonceStore: new FileRemoteNonceStore({ filePath: path.join(directory, 'nonces.json') }),
+      idempotencyStore: await new DurableIdempotencyStore({ filePath: path.join(directory, 'idempotency.jsonl') }).init(),
+      auditJournal: new FileEventJournal(path.join(directory, 'audit')),
+      authorize: () => ({ allowed: true }), handlers: { echo: async (input) => {
+        calls++;
+        started();
+        await held;
+        return input;
+      } } });
+    await worker.start();
+    const startBridge = async () => {
+      bridge = new TlsWorkerBridge({ host: '127.0.0.1', port: 0, socketPath, key: certs.serverKey,
+        cert: certs.serverCert, ca: certs.ca, clientFingerprints: [certs.clientFingerprint256] });
+      await bridge.start();
+      return new TlsWorkerClient({ host: '127.0.0.1', port: bridge.address().port, servername: 'localhost',
+        serverFingerprint256: certs.serverFingerprint256, ca: certs.ca, key: certs.clientKey,
+        cert: certs.clientCert, nodeId: 'node-1', authenticator: new RemoteWorkerAuthenticator({ key }) });
+    };
+    const client = await startBridge();
+    const request = { requestId: 'tls-disconnect-1', capabilityId: 'echo', input: { value: 42 } };
+    const first = client.execute(request);
+    await entered;
+    await bridge.stop();
+    await assert.rejects(first);
+    const replacement = await startBridge();
+    await assert.rejects(replacement.execute(request), { code: 'REMOTE_IN_PROGRESS' });
+    release();
+    let result;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try { result = await replacement.execute(request); break; }
+      catch (error) {
+        if (error.code !== 'REMOTE_IN_PROGRESS') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    assert.deepEqual(result, request.input);
+    assert.equal(calls, 1);
+  } finally {
+    release?.();
+    await bridge?.stop();
+    await worker?.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

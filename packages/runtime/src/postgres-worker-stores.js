@@ -15,7 +15,11 @@ export class PostgresWorkerIdempotencyStore {
   async init() {
     await this.pool.query(`CREATE TABLE IF NOT EXISTS super_worker_requests (
       key text PRIMARY KEY, fingerprint text NOT NULL, claim_token text NOT NULL,
-      status text NOT NULL, response jsonb, expires_at timestamptz NOT NULL);`);
+      status text NOT NULL, response jsonb, expires_at timestamptz NOT NULL);
+      CREATE TABLE IF NOT EXISTS super_worker_reconciliations (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, request_key text NOT NULL,
+        fingerprint text NOT NULL, claim_token text NOT NULL, action text NOT NULL,
+        reason text NOT NULL, recorded_at timestamptz NOT NULL DEFAULT clock_timestamp());`);
     return this;
   }
   async claim(key, fingerprint) {
@@ -51,16 +55,24 @@ export class PostgresWorkerIdempotencyStore {
         typeof key !== 'string' || typeof fingerprint !== 'string' || typeof claimToken !== 'string') throw new TypeError('Invalid reconciliation');
     const payload = JSON.stringify(response);
     if (!payload || Buffer.byteLength(payload) > 65536) throw new TypeError('Invalid reconciliation response');
-    const { rowCount } = await this.pool.query(`UPDATE super_worker_requests SET status='completed', response=$4::jsonb,
-      expires_at=clock_timestamp()+($5::bigint * interval '1 millisecond')
-      WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()`, [key, fingerprint, claimToken, payload, this.ttlMs]);
+    const { rowCount } = await this.pool.query(`WITH changed AS (
+      UPDATE super_worker_requests SET status='completed', response=$4::jsonb,
+        expires_at=clock_timestamp()+($5::bigint * interval '1 millisecond')
+        WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()
+        RETURNING key, fingerprint, claim_token
+      ) INSERT INTO super_worker_reconciliations (request_key, fingerprint, claim_token, action, reason)
+        SELECT key, fingerprint, claim_token, 'reconcile', $6 FROM changed`, [key, fingerprint, claimToken, payload, this.ttlMs, reason]);
     return rowCount === 1;
   }
   async releaseClaim(key, fingerprint, claimToken, reason) {
     if (typeof reason !== 'string' || !reason.trim() || reason.length > 1024 ||
         typeof key !== 'string' || typeof fingerprint !== 'string' || typeof claimToken !== 'string') throw new TypeError('Invalid release');
-    const { rowCount } = await this.pool.query(`DELETE FROM super_worker_requests
-      WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()`, [key, fingerprint, claimToken]);
+    const { rowCount } = await this.pool.query(`WITH changed AS (
+      DELETE FROM super_worker_requests
+        WHERE key=$1 AND fingerprint=$2 AND claim_token=$3 AND status='pending' AND expires_at <= clock_timestamp()
+        RETURNING key, fingerprint, claim_token
+      ) INSERT INTO super_worker_reconciliations (request_key, fingerprint, claim_token, action, reason)
+        SELECT key, fingerprint, claim_token, 'release', $4 FROM changed`, [key, fingerprint, claimToken, reason]);
     return rowCount === 1;
   }
 }
